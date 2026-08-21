@@ -18,8 +18,9 @@ type Bucket struct {
 	NoMax bool
 }
 
-// The bucket label sets are copied verbatim from the PHP service so a chart drawn
-// here stays directly comparable with the same chart on the Laravel screen.
+// The bucket label sets are fixed constants rather than anything derived from the
+// data. A chart whose buckets moved between two refreshes would be impossible to
+// read a trend from, so the axis stays put and only the counts change.
 var (
 	// TTLBuckets are seconds, inclusive upper bound.
 	TTLBuckets = []Bucket{

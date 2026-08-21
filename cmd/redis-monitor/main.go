@@ -1,9 +1,10 @@
-// Command redis-monitor is a standalone Redis key browser and metrics dashboard:
-// one binary that serves both the JSON API and the page that consumes it.
+// Command redis-monitor is a standalone Redis key browser, metrics dashboard and
+// connected-clients view: one binary that serves both the JSON API and the page
+// that consumes it.
 //
-// It is a port of the Redis monitor screen in branch-based-account-opening-api,
-// with the Laravel dependencies (Passport, the users table, the application cache)
-// replaced by a bearer token, a shared TOTP secret and a JSON file.
+// Everything it needs is a Redis address and a credential. Sessions live in
+// memory, the recorded trend in a JSON file, and the UI is compiled in, so there
+// is no database, no asset pipeline and nothing to deploy alongside it.
 package main
 
 import (

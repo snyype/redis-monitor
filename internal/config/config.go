@@ -1,6 +1,6 @@
-// Package config holds every knob the monitor reads, mirroring the PHP
-// config/redis-monitor.php it was ported from: same names, same defaults, so the
-// configuration table in that project's README transfers unchanged.
+// Package config holds every knob the monitor reads, in one place, with the
+// defaults and the floors applied once at load time so the rest of the code can
+// trust the numbers it is given.
 package config
 
 import (
@@ -15,10 +15,11 @@ import (
 
 // Redis is the server this monitor inspects.
 //
-// Note there is deliberately no key-prefix option. The PHP version needed a raw
-// client precisely because Laravel's Redis manager prefixes every command, which
-// would double-prefix the key names SCAN hands back. go-redis prefixes nothing,
-// so the monitor shows exactly what is on the server — do not add a prefix here.
+// Note there is deliberately no key-prefix option, and adding one would be a bug.
+// SCAN returns real key names exactly as they are stored, so a client that
+// transparently prefixed every command would prefix those names a second time on
+// the way back — the browser would then show, and fail to read, keys that do not
+// exist. The monitor must show precisely what is on the server.
 type Redis struct {
 	Scheme       string
 	Host         string
@@ -126,9 +127,8 @@ type Config struct {
 	LoginRateLimit int
 }
 
-// Default redaction patterns, ported from config/redis-monitor.php. The PHP
-// patterns carry the /i flag and use no backreferences, so they translate to RE2
-// unchanged with an inline (?i).
+// Default redaction patterns. Case-insensitive via an inline (?i), and free of
+// backreferences so they compile under RE2.
 var (
 	defaultRedactKeyPatterns = []string{
 		`(?i)(^|[:._-])(password|passwd|secret|token|otp|mpin|pin|cvv|card|credential|private[_-]?key)([:._-]|$)`,
@@ -244,8 +244,8 @@ func Load(envFile string) (*Config, error) {
 	return cfg, cfg.Validate()
 }
 
-// clamp applies the same max()/min() floors the PHP service applies at every read
-// site, once, here — so the rest of the code can trust the numbers.
+// clamp applies every floor once, here, rather than at each read site — so no
+// caller has to defend itself against a sample size of zero or a page size of -1.
 func (c *Config) clamp() {
 	c.PageSize = atLeast(c.PageSize, 1)
 	c.MaxPageSize = atLeast(c.MaxPageSize, c.PageSize)
@@ -399,8 +399,11 @@ func envStr(name, fallback string) string {
 	return fallback
 }
 
-// nullableStr treats the literal "null" as absent, the way Laravel's config cast
-// does — REDIS_PASSWORD=null means "no password", not a password of "null".
+// nullableStr treats the literal string "null" as absent.
+//
+// Plenty of tooling writes REDIS_PASSWORD=null to mean "no password". Taken
+// literally the monitor would try to authenticate with the word "null" and fail to
+// connect at all, which is a confusing way to discover a config convention.
 func nullableStr(name string) string {
 	value := strings.TrimSpace(os.Getenv(name))
 

@@ -247,10 +247,10 @@ func keyspacePerDatabase(serverInfo *redisx.Info) []KeyspaceDBInfo {
 
 // sampleKeyspace is the bounded SCAN behind the TTL, type and prefix charts.
 //
-// TYPE and TTL are asked for every sampled key. The PHP original spends two round
-// trips per key; here the whole batch goes out as one pipelined round trip, so the
-// cost tracks the number of SCAN batches rather than the number of keys. The
-// sample is still capped, and the payload still reports what fraction it saw.
+// TYPE and TTL are asked for every sampled key, but a whole SCAN batch goes out as
+// one pipelined round trip rather than two per key — so the cost tracks the number
+// of batches rather than the number of keys. The sample is still capped, and the
+// payload still reports what fraction of the keyspace it saw.
 func (s *Service) sampleKeyspace(ctx context.Context, client *redis.Client, keys int64) (*KeyspaceSample, error) {
 	limit := int64(s.cfg.MetricsSampleSize)
 

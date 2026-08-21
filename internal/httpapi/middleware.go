@@ -88,8 +88,8 @@ func bearerToken(r *http.Request) string {
 	return strings.TrimSpace(r.URL.Query().Get("access_token"))
 }
 
-// rateLimiter is a per-IP token bucket, standing in for Laravel's throttle
-// middleware: 120 reads and 20 deletes a minute by default.
+// rateLimiter is a per-IP token bucket: 120 reads and 20 deletes a minute by
+// default.
 //
 // The point is not to stop an attacker — the token already does that — but to stop
 // an open dashboard, or a loop in a script, from turning into a SCAN storm against

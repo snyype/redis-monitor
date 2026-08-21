@@ -7,9 +7,8 @@ import (
 	"time"
 )
 
-// memoryCache is the in-process stand-in for the application cache the PHP service
-// leans on. Its whole job is to stop a dashboard left open on auto-refresh from
-// turning into a SCAN loop against production: an overview is reused for
+// memoryCache exists for one reason: to stop a dashboard left open on auto-refresh
+// from turning into a SCAN loop against production. An overview is reused for
 // metrics_cache_seconds and the deep stats payload for stats_cache_seconds.
 //
 // Entries expire lazily on read. There is no janitor because the key space is

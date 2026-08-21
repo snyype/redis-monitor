@@ -4,10 +4,9 @@ import "net/http"
 
 // Handler wires every route.
 //
-// Layered the same way the Laravel routes are: the feature flag first (a disabled
-// monitor 404s rather than admitting it exists), then the bearer token, then the
-// throttle — reads at read_rate_limit a minute, the single write at a twentieth of
-// that.
+// Layered outside in: the feature flag first (a disabled monitor 404s rather than
+// admitting it exists), then the credential, then the throttle — reads at
+// read_rate_limit a minute, the single write at a twentieth of that.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 

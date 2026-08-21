@@ -1,13 +1,13 @@
 # Redis Monitor (Go)
 
-A standalone Redis key browser and metrics dashboard: **one binary** that serves
-both the JSON API and the page that consumes it. No PHP, no database, no asset
-pipeline, no CDN.
+A standalone Redis key browser, metrics dashboard and connected-clients view:
+**one binary** that serves both the JSON API and the page that consumes it. No
+database, no asset pipeline, no CDN, and one third-party Go dependency.
 
-A port of the Redis monitor screen in `branch-based-account-opening-api`, with the
-Laravel dependencies replaced by things a single binary can carry: a username and
-password (or a static bearer token) instead of Passport, a shared TOTP secret
-instead of the `users` table, and a JSON file instead of the application cache.
+Everything it needs to run is a Redis address and a credential — a username and
+password for people, a static bearer token for scripts. Sessions live in memory,
+the recorded trend lives in a JSON file, and the UI is compiled into the
+executable, so there is nothing to deploy alongside it.
 
 ```
 go build -o redis-monitor ./cmd/redis-monitor
@@ -147,8 +147,7 @@ Two consequences worth knowing:
 
 Everything is read from the environment, with `.env` as a fallback (a real
 environment variable always wins). See [`.env.example`](.env.example) for the
-annotated full list; the names and defaults match `config/redis-monitor.php` in the
-PHP original, so its configuration table transfers unchanged.
+annotated full list.
 
 The ones you will actually touch:
 
@@ -170,17 +169,19 @@ from `REDIS_PASSWORD` (how it authenticates to Redis).
 
 ### No key prefix, deliberately
 
-There is no prefix option and there should not be one. The PHP version needed a
-raw client precisely because Laravel's Redis manager prefixes every command, which
-double-prefixes the key names `SCAN` hands back. go-redis prefixes nothing, so this
-monitor shows exactly what is on the server.
+There is no prefix option, and adding one would be a bug. `SCAN` returns real key
+names exactly as they are stored, so a client that transparently prefixed every
+command would prefix those names a second time on the way back — the browser would
+then show, and fail to read, keys that do not exist. This monitor shows precisely
+what is on the server.
 
 ---
 
 ## API
 
-Every endpoint answers `{"success": true, "data": {…}}`, the same envelope as the
-PHP controller, so payloads from either implementation are directly comparable.
+Every endpoint answers `{"success": true, "data": {…}}` — one envelope shape, so a
+client has exactly one thing to parse and one place to look for a failure
+message.
 
 | Method | Path | Notes |
 |---|---|---|
@@ -230,7 +231,7 @@ at all.
 ### `POST /keys/delete`
 
 ```json
-{ "db": 0, "keys": ["laravel_cache:config", "laravel_cache:branches"], "code": "418256" }
+{ "db": 0, "keys": ["app_cache:config", "app_cache:branches"], "code": "418256" }
 ```
 
 **There is no pattern delete, deliberately.** The caller has to name every key, so
@@ -291,8 +292,8 @@ reports on would turn up in its own charts.
   baseline tick, never as zero keys — `recorded: false` keeps the two apart.
 - `expired` / `evicted` per day are deltas of counters that reset on restart; a
   negative delta is reported as `null` rather than a nonsense number.
-- Deleting the data directory discards the history. (The PHP original kept this in
-  the Laravel cache, where `cache:clear` wiped it; a file survives a restart.)
+- Deleting the data directory discards the history. A file rather than memory, so
+  the series survives a restart of the binary.
 
 ---
 

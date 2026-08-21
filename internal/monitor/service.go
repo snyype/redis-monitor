@@ -2,8 +2,7 @@
 // samples, INFO counters, capped value previews, a recorded trend, and the single
 // write — deleting keys the caller has named.
 //
-// Ported from the PHP RedisMonitorService in branch-based-account-opening-api.
-// Two properties are load-bearing and easy to lose in a refactor:
+// Two properties here are load-bearing and easy to lose in a refactor:
 //
 //	Everything is bounded. Every SCAN has a key limit AND an iteration cap, every
 //	value preview is truncated, and every expensive payload is cached. A monitor

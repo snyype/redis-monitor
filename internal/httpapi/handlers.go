@@ -16,8 +16,8 @@ import (
 	"redismonitor/internal/totp"
 )
 
-// maxKeyNameLength matches the PHP validation: a Redis key can technically be
-// 512MB, but nothing a browser should be posting.
+// maxKeyNameLength bounds a key name in a request. Redis itself allows up to
+// 512MB, which is not something a browser should be posting.
 const maxKeyNameLength = 1024
 
 // maxPatternLength caps the MATCH glob.

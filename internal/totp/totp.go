@@ -1,9 +1,9 @@
 // Package totp is a dependency-free RFC 6238 (TOTP) / RFC 4226 (HOTP)
-// implementation: SHA1, 6 digits, 30 second period — the defaults every
-// authenticator app uses.
+// implementation: SHA1, 6 digits, 30 second period.
 //
-// Ported from the TotpHelper the PHP monitor authorises deletes with, so the same
-// enrolled authenticator works against either implementation.
+// Those are the defaults every authenticator app assumes, and nothing here
+// deviates from them — so a secret enrols by QR or by hand with no special
+// handling at either end.
 package totp
 
 import (
@@ -184,8 +184,8 @@ func (s *SpentCodes) prune(at time.Time) {
 	}
 }
 
-// fingerprint keeps the code itself out of memory, the way the PHP version keeps
-// it out of the cache key.
+// fingerprint keeps the code itself out of the blacklist, so a memory dump of a
+// long-lived process does not hand over six digits that may still be valid.
 func fingerprint(code string) string {
 	sum := sha256.Sum256([]byte(code))
 
