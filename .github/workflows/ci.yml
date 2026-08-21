@@ -1,0 +1,240 @@
+name: CI
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+  workflow_dispatch:
+
+# A new push to the same branch supersedes the old run; there is nothing to learn
+# from finishing a build of code nobody has any more.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Format and vet
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # Read the version from go.mod, so bumping the directive is the only
+          # place a Go version is ever written down.
+          go-version-file: go.mod
+
+      - name: gofmt
+        run: |
+          unformatted=$(gofmt -l .)
+          if [ -n "$unformatted" ]; then
+            echo "These files are not gofmt'd:"
+            echo "$unformatted"
+            echo
+            gofmt -d $unformatted
+            exit 1
+          fi
+
+      - run: go vet ./...
+
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Windows is not incidental: this is developed on Windows and deployed on
+        # Linux, and the history store does file renames that behave differently
+        # between the two.
+        os: [ubuntu-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - run: go test -race ./...
+
+  smoke:
+    name: Smoke (Redis ${{ matrix.redis }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # Both versions on purpose. The awkward code in this project is the
+        # version-dependent fallbacks — SCAN ... TYPE needs Redis 6, and laddr /
+        # tot-mem / resp only exist from Redis 7 — so exercising one version proves
+        # only half of it. 5 takes the fallback paths, 7 takes the native ones.
+        redis: ['5', '7']
+
+    services:
+      redis:
+        image: redis:${{ matrix.redis }}-alpine
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 10
+
+    env:
+      HTTP_ADDR: '127.0.0.1:8088'
+      REDIS_HOST: 127.0.0.1
+      REDIS_PORT: '6379'
+      REDIS_MONITOR_DEV: 'true'
+      REDIS_MONITOR_DATA_DIR: ./ci-data
+      BASE: http://127.0.0.1:8088/api/redis-monitor
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+
+      - name: Build
+        run: go build -o redis-monitor ./cmd/redis-monitor
+
+      - name: Version flag
+        run: ./redis-monitor -version
+
+      - name: Seed fixtures
+        run: go run ./cmd/seed -env /dev/null
+
+      - name: Start the monitor
+        run: |
+          ./redis-monitor -env /dev/null > monitor.log 2>&1 &
+          echo $! > monitor.pid
+
+          for attempt in $(seq 1 30); do
+            if curl -fsS http://127.0.0.1:8088/healthz >/dev/null; then
+              echo "up after ${attempt} attempt(s)"
+              exit 0
+            fi
+            sleep 1
+          done
+
+          echo "the monitor never became healthy"
+          cat monitor.log
+          exit 1
+
+      - name: Probes
+        run: |
+          set -euo pipefail
+          curl -fsS http://127.0.0.1:8088/healthz | jq -e '.status == "ok"'
+          curl -fsS http://127.0.0.1:8088/readyz  | jq -e '.reachable == true'
+          # The page is served from the binary, so an empty body means go:embed
+          # silently shipped nothing.
+          test "$(curl -fsS -o /dev/null -w '%{size_download}' http://127.0.0.1:8088/)" -gt 10000
+
+      - name: Read endpoints
+        run: |
+          set -euo pipefail
+          curl -fsS "$BASE/overview"   | jq -e '.success and .data.connection.reachable'
+          curl -fsS "$BASE/stats"      | jq -e '.success and (.data.charts.expiry_by_day.rows | length) == 14'
+          curl -fsS "$BASE/namespaces" | jq -e '.success and (.data.rows | length) > 0'
+          curl -fsS "$BASE/keys?per_page=5" | jq -e '.success and (.data.rows | length) > 0'
+
+      - name: SCAN TYPE falls back below Redis 6
+        run: |
+          set -euo pipefail
+          filtered=$(curl -fsS "$BASE/keys?type=hash&per_page=10")
+
+          echo "$filtered" | jq -e '(.data.rows | length) == 1 and .data.rows[0].type == "hash"'
+
+          # The whole point of the matrix: Redis 6+ filters server-side, Redis 5
+          # cannot and must fall back without changing the answer.
+          if [ "${{ matrix.redis }}" = "5" ]; then
+            echo "$filtered" | jq -e '.data.server_filtered == false'
+          else
+            echo "$filtered" | jq -e '.data.server_filtered == true'
+          fi
+
+      - name: Value previews and redaction
+        run: |
+          set -euo pipefail
+          curl -fsS --get "$BASE/key" --data-urlencode 'key=monitorseed:list:queue' \
+            | jq -e '.data.preview.kind == "list" and (.data.preview.items | length) == 3'
+
+          curl -fsS --get "$BASE/key" --data-urlencode 'key=monitorseed:stream:events' \
+            | jq -e '.data.preview.kind == "stream"'
+
+          # A key whose NAME is sensitive must never have its value returned.
+          curl -fsS --get "$BASE/key" --data-urlencode 'key=monitorseed:user:token:abc' \
+            | jq -e '.data.redacted == true and .data.preview.kind == "redacted" and (.data.preview | has("value") | not)'
+
+          # A secret inside an otherwise harmless value must be masked.
+          curl -fsS --get "$BASE/key" --data-urlencode 'key=monitorseed:session:payload' \
+            | jq -e '.data.preview.value | test("REDACTED") and (test("eyJhbGciOi") | not)'
+
+          # A hash field named "password" must be masked even though the value looks
+          # innocent on its own.
+          curl -fsS --get "$BASE/key" --data-urlencode 'key=monitorseed:hash:profile' \
+            | jq -e '[.data.preview.pairs[] | select(.field == "password")][0].value == "[REDACTED]"'
+
+      - name: Connected clients
+        run: |
+          set -euo pipefail
+          clients=$(curl -fsS "$BASE/clients")
+
+          echo "$clients" | jq -e '.success and (.data.rows | length) > 0'
+          # The monitor names its own connections, so at least one row is itself.
+          echo "$clients" | jq -e '[.data.rows[] | select(.self)] | length > 0'
+          # maxclients is absent from INFO before Redis 7; the CONFIG GET fallback
+          # has to find it either way.
+          echo "$clients" | jq -e '.data.totals.maxclients > 0'
+
+          if [ "${{ matrix.redis }}" = "7" ]; then
+            echo "$clients" | jq -e '.data.fields.laddr and .data.fields.tot_mem and .data.fields.resp'
+          else
+            echo "$clients" | jq -e '(.data.fields.laddr | not) and (.data.fields.tot_mem | not)'
+          fi
+
+      - name: Deletes are refused without an authenticator secret
+        run: |
+          set -euo pipefail
+          # REQUIRE_AUTHENTICATOR defaults on and no secret is set here, so this must
+          # be a 403 rather than a delete that happens to work.
+          status=$(curl -s -o /dev/null -w '%{http_code}' -X POST "$BASE/keys/delete" \
+            -H 'Content-Type: application/json' -d '{"keys":["monitorseed:json:branch"]}')
+
+          test "$status" = "403"
+          curl -fsS --get "$BASE/key" --data-urlencode 'key=monitorseed:json:branch' | jq -e '.data.exists'
+
+      - name: Stop
+        if: always()
+        run: |
+          [ -f monitor.pid ] && kill "$(cat monitor.pid)" 2>/dev/null || true
+          echo "--- monitor log ---"
+          cat monitor.log || true
+
+  docker:
+    name: Docker build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      # Build only, no push: this proves the Dockerfile still works on every commit
+      # without publishing anything from a branch.
+      - uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          load: true
+          tags: redis-monitor:ci
+          build-args: |
+            VERSION=ci-${{ github.sha }}
+            COMMIT=${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: The image runs and reports its version
+        run: docker run --rm redis-monitor:ci -version

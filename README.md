@@ -379,13 +379,94 @@ On any machine without that policy, plain `go test ./...` is equivalent.
 ## Docker
 
 ```
-docker build -t redis-monitor .
 docker run --rm -p 8088:8088 \
   -e REDIS_HOST=host.docker.internal \
-  -e REDIS_MONITOR_TOKEN=... \
+  -e REDIS_MONITOR_USERNAME=ops \
+  -e REDIS_MONITOR_PASSWORD=... \
   -e REDIS_MONITOR_TOTP_SECRET=... \
   -v redis-monitor-data:/data \
-  redis-monitor
+  ghcr.io/snyype/redis-monitor:latest
 ```
 
-The volume is only needed if the recorded trend should outlive the container.
+`docker build -t redis-monitor .` builds it locally instead. The volume is only
+needed if the recorded trend should outlive the container.
+
+The builder stage is pinned to `$BUILDPLATFORM` and Go cross-compiles to
+`$TARGETARCH` itself. Building it the obvious way instead — letting the builder run
+under QEMU — emulates the whole Go toolchain and turns a two-platform build from
+seconds into many minutes, for byte-identical output.
+
+---
+
+## CI and releases
+
+Two workflows, both in `.github/workflows/`.
+
+### `ci.yml` — every push and pull request
+
+| Job | What it does |
+|---|---|
+| `lint` | `gofmt -l` (fails with a diff) and `go vet` |
+| `test` | `go test -race` on **ubuntu and windows** |
+| `smoke` | the real binary against a real Redis, on **5 and 7** |
+| `docker` | builds the image and runs `-version` — no push |
+
+Two of those choices are load-bearing:
+
+**Windows is in the test matrix** because this is developed on Windows and deployed
+on Linux, and the history store does file renames that behave differently between
+the two.
+
+**Redis 5 and 7 are both in the smoke matrix** because the subtle code here is the
+version-dependent fallbacks, and testing one version proves half of them.
+`SCAN … TYPE` needs Redis 6, and `laddr` / `tot-mem` / `resp` only exist from Redis
+7 — so the smoke job asserts `server_filtered == false` on 5 and `true` on 7, and
+that the optional `CLIENT LIST` fields are reported absent on 5 and present on 7.
+A regression that only breaks old servers would otherwise ship silently.
+
+The smoke job also asserts what matters most and is easiest to break quietly:
+that the embedded page is actually in the binary (a non-trivial body from `/`),
+that a sensitive key name returns no value at all, that a secret buried in an
+otherwise harmless value is masked, that a hash field called `password` is masked,
+and that a delete with no authenticator secret configured is refused with a 403
+rather than succeeding.
+
+### `release.yml` — on a `v*` tag
+
+```
+git tag -a v1.0.0 -m "First release"
+git push origin v1.0.0
+```
+
+| Job | Output |
+|---|---|
+| `verify` | gofmt, vet and `go test -race` against the tagged commit |
+| `binaries` | linux/darwin amd64+arm64 and windows/amd64, archived with the README and `.env.example` |
+| `release` | a GitHub Release with those archives and `checksums.txt` |
+| `image` | `ghcr.io/snyype/redis-monitor` for linux/amd64 and linux/arm64 |
+
+`verify` gates the other three: publishing a broken binary is worse than publishing
+late.
+
+Version, commit and build time are stamped in at link time and reported by
+`redis-monitor -version` and in the startup log — a binary that cannot say which
+build it is turns "did the fix ship?" into guesswork.
+
+`v1.2.3` publishes the image as `1.2.3`, `1.2`, `1` and `latest`, so a deployment
+can pin as tightly or as loosely as it likes. A prerelease tag such as `v1.2.3-rc1`
+gets only its own exact tag, which is what stops a release candidate becoming
+`:latest`.
+
+The release job is idempotent: a re-run replaces the assets rather than erroring on
+a release that already exists. To retry a failed publish without inventing a new
+version, dispatch the workflow manually and select the **tag** in the "Use workflow
+from" box — dispatching from a branch is refused rather than half-working.
+
+### First-time setup
+
+Nothing to configure — both workflows use the built-in `GITHUB_TOKEN`, and GHCR
+accepts it via the `packages: write` permission already declared in the job.
+
+The first published package is private by default. To make it public, open
+**Packages → redis-monitor → Package settings** on GitHub once and change the
+visibility.
