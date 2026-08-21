@@ -1,0 +1,1973 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Redis Monitor</title>
+<style>
+/* One self-contained stylesheet: no CDN, no webfont, no build step. The bars and
+   columns are plain divs with a percentage width or height — a chart library would
+   be a network dependency for something CSS already draws. */
+:root {
+  --bg: #0f1117;
+  --panel: #161923;
+  --panel-2: #1c2030;
+  --line: #262b3a;
+  --ink: #e6e9f2;
+  --ink-dim: #949cb4;
+  --ink-faint: #6b7285;
+  --accent: #4f8ef7;
+  --accent-2: #7c5cff;
+  --good: #35c98a;
+  --warn: #e8b339;
+  --bad: #ef5f6b;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+  --sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --radius: 10px;
+}
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f4f6fb; --panel: #ffffff; --panel-2: #f7f9fd; --line: #e2e7f0;
+    --ink: #1b2030; --ink-dim: #5a6379; --ink-faint: #8b93a7;
+  }
+}
+* { box-sizing: border-box; }
+body {
+  margin: 0; background: var(--bg); color: var(--ink);
+  font: 14px/1.5 var(--sans); -webkit-font-smoothing: antialiased;
+}
+a { color: var(--accent); }
+button { font: inherit; cursor: pointer; }
+input, select { font: inherit; }
+
+/* ── shell ───────────────────────────────────────────────────────────── */
+.topbar {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  padding: 12px 20px; background: var(--panel); border-bottom: 1px solid var(--line);
+}
+.brand { display: flex; align-items: center; gap: 10px; font-weight: 650; letter-spacing: -0.01em; }
+.brand svg { width: 20px; height: 20px; color: var(--bad); }
+.spacer { flex: 1; }
+.wrap { max-width: 1420px; margin: 0 auto; padding: 20px; }
+
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 3px 9px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink-dim); font-size: 12px;
+}
+.badge.mono { font-family: var(--mono); }
+.dot { width: 7px; height: 7px; border-radius: 50%; background: var(--good); flex: none; }
+.dot.down { background: var(--bad); }
+
+.btn {
+  display: inline-flex; align-items: center; gap: 7px;
+  padding: 7px 13px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink);
+}
+.btn:hover { border-color: var(--accent); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { background: var(--bad); border-color: var(--bad); color: #fff; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.ghost { background: transparent; }
+.btn svg { width: 14px; height: 14px; }
+
+.field { display: flex; align-items: center; gap: 7px; font-size: 12px; color: var(--ink-dim); }
+.field select, .field input {
+  padding: 6px 9px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink);
+}
+.field input[type=search] { min-width: 260px; }
+.field.grow { flex: 1; }
+.field.grow input { width: 100%; }
+
+/* ── cards ───────────────────────────────────────────────────────────── */
+.card {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); margin-bottom: 18px; overflow: hidden;
+}
+.card-head {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  padding: 13px 16px; border-bottom: 1px solid var(--line);
+}
+.card-head h2 { margin: 0; font-size: 14px; font-weight: 620; }
+.card-body { padding: 16px; }
+.hint { font-size: 12px; color: var(--ink-faint); }
+
+.notice {
+  padding: 11px 14px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); font-size: 13px; margin-bottom: 16px;
+}
+.notice.bad { border-color: color-mix(in srgb, var(--bad) 45%, var(--line)); }
+.notice.warn { border-color: color-mix(in srgb, var(--warn) 45%, var(--line)); }
+.notice b { color: var(--ink); }
+
+/* ── tiles ───────────────────────────────────────────────────────────── */
+.tiles {
+  display: grid; gap: 12px; margin-bottom: 18px;
+  grid-template-columns: repeat(auto-fit, minmax(168px, 1fr));
+}
+.tile {
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 13px 15px;
+}
+.tile .k { font-size: 11px; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-faint); }
+.tile .v { font-size: 22px; font-weight: 650; margin-top: 3px; letter-spacing: -0.02em; }
+.tile .s { font-size: 12px; color: var(--ink-dim); margin-top: 2px; }
+.meter { height: 4px; border-radius: 2px; background: var(--line); margin-top: 9px; overflow: hidden; }
+.meter > i { display: block; height: 100%; background: var(--accent); }
+
+/* ── charts: horizontal bars ─────────────────────────────────────────── */
+.charts { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); }
+.chart-title { font-size: 12px; font-weight: 620; text-transform: uppercase; letter-spacing: 0.05em; }
+.chart-sub { font-size: 11px; color: var(--ink-faint); margin: 2px 0 10px; }
+.bars { display: flex; flex-direction: column; gap: 6px; }
+.bar { display: grid; grid-template-columns: minmax(84px, 34%) 1fr auto; gap: 10px; align-items: center; font-size: 12px; }
+.bar .lbl { color: var(--ink-dim); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: var(--mono); }
+.bar .track { height: 8px; border-radius: 4px; background: var(--panel-2); overflow: hidden; }
+.bar .track > i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent-2)); }
+.bar .num { font-variant-numeric: tabular-nums; color: var(--ink); min-width: 58px; text-align: right; }
+.empty { font-size: 12px; color: var(--ink-faint); padding: 10px 0; }
+
+/* ── charts: vertical columns ────────────────────────────────────────── */
+.cols { display: flex; align-items: flex-end; gap: 3px; height: 128px; padding-top: 6px; }
+.col { flex: 1; min-width: 4px; display: flex; align-items: flex-end; height: 100%; }
+.col > i {
+  display: block; width: 100%; min-height: 2px; border-radius: 3px 3px 0 0;
+  background: linear-gradient(180deg, var(--accent), var(--accent-2));
+}
+.col.void > i { background: var(--line); min-height: 2px; }
+.col-axis { display: flex; gap: 3px; margin-top: 6px; }
+.col-axis span {
+  flex: 1; min-width: 4px; font-size: 9px; color: var(--ink-faint);
+  text-align: center; overflow: hidden; white-space: nowrap;
+}
+.strip { display: flex; gap: 20px; flex-wrap: wrap; margin-bottom: 16px; }
+.strip div { font-size: 12px; color: var(--ink-dim); }
+.strip b { display: block; font-size: 17px; color: var(--ink); font-weight: 650; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; }
+.seg button { padding: 5px 11px; border: 0; background: transparent; color: var(--ink-dim); font-size: 12px; }
+.seg button.on { background: var(--accent); color: #fff; }
+
+/* ── tables ──────────────────────────────────────────────────────────── */
+.scroll { overflow-x: auto; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; }
+th, td { padding: 9px 12px; text-align: left; border-bottom: 1px solid var(--line); white-space: nowrap; }
+th {
+  font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em;
+  color: var(--ink-faint); font-weight: 600; background: var(--panel-2);
+  position: sticky; top: 0;
+}
+td.num, th.num { text-align: right; font-variant-numeric: tabular-nums; }
+tbody tr:hover { background: var(--panel-2); }
+.keyname { font-family: var(--mono); max-width: 460px; overflow: hidden; text-overflow: ellipsis; }
+.link { background: none; border: 0; color: var(--accent); padding: 0; text-decoration: underline; }
+.pill {
+  display: inline-block; padding: 1px 7px; border-radius: 999px; font-size: 11px;
+  background: var(--panel-2); border: 1px solid var(--line); color: var(--ink-dim);
+  font-family: var(--mono);
+}
+.ttl-soon { color: var(--warn); }
+.ttl-none { color: var(--ink-faint); }
+.tag-red { color: var(--bad); font-size: 11px; }
+
+/* ── drawer & modal ──────────────────────────────────────────────────── */
+.scrim { position: fixed; inset: 0; background: rgba(3, 5, 12, 0.62); z-index: 40; }
+.drawer {
+  position: fixed; top: 0; right: 0; bottom: 0; width: min(760px, 100%);
+  background: var(--panel); border-left: 1px solid var(--line);
+  z-index: 41; display: flex; flex-direction: column;
+}
+.drawer-head { padding: 14px 18px; border-bottom: 1px solid var(--line); display: flex; gap: 12px; align-items: flex-start; }
+.drawer-body { padding: 18px; overflow: auto; flex: 1; }
+.kv { display: grid; grid-template-columns: 150px 1fr; gap: 7px 14px; font-size: 13px; margin-bottom: 18px; }
+.kv dt { color: var(--ink-faint); }
+.kv dd { margin: 0; font-family: var(--mono); overflow-wrap: anywhere; }
+pre.value {
+  margin: 0; padding: 14px; border-radius: 8px; background: var(--panel-2);
+  border: 1px solid var(--line); font-family: var(--mono); font-size: 12.5px;
+  white-space: pre-wrap; overflow-wrap: anywhere; max-height: 52vh; overflow: auto;
+}
+.modal {
+  position: fixed; z-index: 41; top: 50%; left: 50%; transform: translate(-50%, -50%);
+  width: min(560px, calc(100% - 32px)); background: var(--panel);
+  border: 1px solid var(--line); border-radius: var(--radius);
+}
+.modal-head { padding: 15px 18px; border-bottom: 1px solid var(--line); font-weight: 620; }
+.modal-body { padding: 18px; }
+.modal-foot { padding: 14px 18px; border-top: 1px solid var(--line); display: flex; gap: 10px; justify-content: flex-end; }
+.code-input {
+  width: 100%; padding: 11px 14px; border-radius: 8px; border: 1px solid var(--line);
+  background: var(--panel-2); color: var(--ink); font-family: var(--mono);
+  font-size: 21px; letter-spacing: 0.28em; text-align: center;
+}
+.keylist {
+  max-height: 170px; overflow: auto; margin: 0 0 14px; padding: 10px 12px;
+  border-radius: 8px; background: var(--panel-2); border: 1px solid var(--line);
+  font-family: var(--mono); font-size: 12px; list-style: none;
+}
+.gate {
+  position: fixed; inset: 0; z-index: 60; display: grid; place-items: center;
+  background: var(--bg); padding: 20px;
+}
+.gate .box { width: min(420px, 100%); }
+.hidden { display: none !important; }
+.err { color: var(--bad); font-size: 12.5px; margin-top: 10px; min-height: 18px; }
+.spin { display: inline-block; width: 13px; height: 13px; border: 2px solid var(--line); border-top-color: var(--accent); border-radius: 50%; animation: spin 0.7s linear infinite; }
+@keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+
+<!-- The gate. Which form it shows depends on what the binary has configured:
+     a username and password get a session, a bare REDIS_MONITOR_TOKEN gets pasted
+     straight in. /config is readable without either, which is how the page knows
+     which of the two to draw before anyone has authenticated. -->
+<div class="gate" id="gate">
+  <div class="box">
+    <div class="brand" style="margin-bottom:14px">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+      <span>Redis Monitor</span>
+    </div>
+
+    <div class="card hidden" id="gate-login">
+      <div class="card-head"><h2>Sign in</h2></div>
+      <div class="card-body">
+        <label class="field" style="flex-direction:column;align-items:stretch;margin-bottom:12px">Username
+          <input id="login-user" autocomplete="username" spellcheck="false"
+                 style="padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)">
+        </label>
+        <label class="field" style="flex-direction:column;align-items:stretch;margin-bottom:12px">Password
+          <input id="login-pass" type="password" autocomplete="current-password"
+                 style="padding:9px 11px;border-radius:8px;border:1px solid var(--line);background:var(--panel-2);color:var(--ink)">
+        </label>
+        <div id="login-code-wrap" class="hidden" style="margin-bottom:12px">
+          <div class="field" style="margin-bottom:6px">Authenticator code</div>
+          <input class="code-input" id="login-code" inputmode="numeric" maxlength="6" autocomplete="one-time-code" placeholder="000000">
+        </div>
+        <div class="err" id="login-err"></div>
+        <button class="btn primary" id="login-go" style="width:100%;justify-content:center">Sign in</button>
+      </div>
+    </div>
+
+    <div class="card hidden" id="gate-token-card">
+      <div class="card-head"><h2>Access token</h2></div>
+      <div class="card-body">
+        <p class="hint" style="margin-top:0">Paste the value of <code>REDIS_MONITOR_TOKEN</code>. It is kept in this browser only.</p>
+        <input class="code-input" id="gate-token" type="password" style="font-size:15px;letter-spacing:normal;text-align:left" autocomplete="off" spellcheck="false">
+        <div class="err" id="gate-err"></div>
+        <button class="btn primary" id="gate-go" style="width:100%;justify-content:center">Connect</button>
+      </div>
+    </div>
+
+    <p class="hint" id="gate-note" style="text-align:center"></p>
+  </div>
+</div>
+
+<div id="app" class="hidden">
+  <div class="topbar">
+    <div class="brand">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14c0 1.66 4.03 3 9 3s9-1.34 9-3V5"/><path d="M3 12c0 1.66 4.03 3 9 3s9-1.34 9-3"/></svg>
+      <span>Redis Monitor</span>
+    </div>
+    <span class="badge mono" id="conn"><span class="dot" id="conn-dot"></span><span id="conn-text">connecting…</span></span>
+    <div class="seg" id="views">
+      <button data-view="dashboard" class="on">Dashboard</button>
+      <button data-view="clients">Clients</button>
+    </div>
+    <div class="spacer"></div>
+    <span class="badge" id="whoami" title="the credential this browser is using"></span>
+    <label class="field">Database
+      <select id="db-select"></select>
+    </label>
+    <label class="field"><input type="checkbox" id="auto" checked> Auto-refresh</label>
+    <button class="btn" id="refresh">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 12a9 9 0 1 1-3-6.7"/><path d="M21 3v6h-6"/></svg>
+      Refresh
+    </button>
+    <button class="btn ghost" id="forget" title="Forget the stored token">Sign out</button>
+  </div>
+
+  <div class="wrap">
+    <div class="notice bad hidden" id="offline"></div>
+    <div class="notice warn hidden" id="disabled-note"></div>
+
+    <div id="view-dashboard">
+    <div class="tiles" id="tiles"></div>
+
+    <!-- Keyspace metrics: exact counters plus the three sampled distributions -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Keyspace metrics</h2>
+        <span class="hint" id="sample-hint"></span>
+      </div>
+      <div class="card-body charts">
+        <div>
+          <div class="chart-title">Keys by TTL</div>
+          <div class="chart-sub" id="sub-ttl">—</div>
+          <div class="bars" id="chart-ttl"></div>
+        </div>
+        <div>
+          <div class="chart-title">Keys by type</div>
+          <div class="chart-sub" id="sub-type">—</div>
+          <div class="bars" id="chart-type"></div>
+        </div>
+        <div>
+          <div class="chart-title">Keys by prefix</div>
+          <div class="chart-sub" id="sub-prefix">—</div>
+          <div class="bars" id="chart-prefix"></div>
+        </div>
+        <div>
+          <div class="chart-title">Keys per database</div>
+          <div class="chart-sub">exact, from INFO keyspace</div>
+          <div class="bars" id="chart-db"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Recorded trend. Redis keeps no history, so this is what the monitor has
+         written down since it was first opened. -->
+    <div class="card hidden" id="trend-card">
+      <div class="card-head">
+        <h2>Keyspace trend</h2>
+        <span class="hint" id="trend-since"></span>
+        <div class="spacer"></div>
+        <div class="seg" id="trend-metric">
+          <button data-metric="keys" class="on">Keys</button>
+          <button data-metric="memory">Memory</button>
+        </div>
+        <div class="seg" id="trend-range"></div>
+      </div>
+      <div class="card-body">
+        <div class="charts">
+          <div>
+            <div class="chart-title" id="trend-day-title">Keys per day</div>
+            <div class="chart-sub" id="trend-day-sub">—</div>
+            <div class="cols" id="trend-day"></div>
+            <div class="col-axis" id="trend-day-axis"></div>
+          </div>
+          <div>
+            <div class="chart-title" id="trend-hour-title">Keys per hour</div>
+            <div class="chart-sub" id="trend-hour-sub">—</div>
+            <div class="cols" id="trend-hour"></div>
+            <div class="col-axis" id="trend-hour-axis"></div>
+          </div>
+          <div>
+            <div class="chart-title">Keys expired per day</div>
+            <div class="chart-sub" id="trend-expired-sub">—</div>
+            <div class="cols" id="trend-expired"></div>
+            <div class="col-axis" id="trend-expired-axis"></div>
+          </div>
+        </div>
+        <div class="notice hidden" id="trend-note" style="margin:16px 0 0"></div>
+      </div>
+    </div>
+
+    <!-- Key analytics: the deep sample -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Key analytics</h2>
+        <span class="hint" id="stats-hint"></span>
+      </div>
+      <div class="card-body">
+        <div class="strip" id="stats-strip"></div>
+        <div class="charts">
+          <div>
+            <div class="chart-title">Keys expiring per day</div>
+            <div class="chart-sub" id="sub-expiry-day">—</div>
+            <div class="cols" id="chart-expiry-day"></div>
+            <div class="col-axis" id="axis-expiry-day"></div>
+          </div>
+          <div>
+            <div class="chart-title">Keys expiring per hour</div>
+            <div class="chart-sub" id="sub-expiry-hour">—</div>
+            <div class="cols" id="chart-expiry-hour"></div>
+            <div class="col-axis" id="axis-expiry-hour"></div>
+          </div>
+          <div>
+            <div class="chart-title">Memory by namespace</div>
+            <div class="chart-sub" id="sub-ns-memory">—</div>
+            <div class="bars" id="chart-ns-memory"></div>
+          </div>
+          <div>
+            <div class="chart-title">Keys by namespace</div>
+            <div class="chart-sub" id="sub-ns-keys">—</div>
+            <div class="bars" id="chart-ns-keys"></div>
+          </div>
+          <div>
+            <div class="chart-title">Keys by footprint</div>
+            <div class="chart-sub" id="sub-size">—</div>
+            <div class="bars" id="chart-size"></div>
+          </div>
+          <div>
+            <div class="chart-title">Keys by idle time</div>
+            <div class="chart-sub" id="sub-idle">—</div>
+            <div class="bars" id="chart-idle"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Breakdown tables -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Breakdown</h2>
+        <span class="hint" id="breakdown-hint"></span>
+      </div>
+      <div class="card-body" style="padding:0">
+        <div class="scroll">
+          <table>
+            <thead><tr>
+              <th>Namespace</th><th class="num">Keys</th><th class="num">Share</th>
+              <th class="num">Memory</th><th class="num">Avg size</th>
+              <th class="num">Volatile</th><th class="num">Avg TTL</th><th class="num">Coldest</th><th></th>
+            </tr></thead>
+            <tbody id="ns-body"></tbody>
+          </table>
+        </div>
+        <div style="height:1px;background:var(--line)"></div>
+        <div class="scroll">
+          <table>
+            <thead><tr><th>Largest sampled keys</th><th>Type</th><th class="num">Memory</th><th class="num">TTL</th><th></th></tr></thead>
+            <tbody id="largest-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+
+    <!-- The key browser -->
+    <div class="card">
+      <div class="card-head">
+        <h2>Keys</h2>
+        <span class="hint" id="keys-hint"></span>
+      </div>
+      <div class="card-body" style="padding-bottom:0">
+        <div style="display:flex;gap:12px;flex-wrap:wrap;align-items:flex-end;margin-bottom:14px">
+          <label class="field" style="flex-direction:column;align-items:stretch">Namespace
+            <select id="ns-filter"><option value="">All namespaces</option></select>
+          </label>
+          <label class="field grow" style="flex-direction:column;align-items:stretch">Pattern
+            <input type="search" id="pattern" placeholder="e.g. laravel_cache:*  —  blank matches everything" spellcheck="false">
+          </label>
+          <label class="field" style="flex-direction:column;align-items:stretch">Type
+            <select id="type-filter"><option value="">Any type</option></select>
+          </label>
+          <label class="field" style="flex-direction:column;align-items:stretch">Per page
+            <select id="per-page"></select>
+          </label>
+          <button class="btn primary" id="apply">Search</button>
+          <div class="spacer"></div>
+          <button class="btn danger hidden" id="delete-selected">Delete selected</button>
+        </div>
+      </div>
+      <div class="scroll">
+        <table>
+          <thead><tr>
+            <th style="width:34px"><input type="checkbox" id="select-all" title="Select every row on this page"></th>
+            <th>Key</th><th>Type</th><th class="num">TTL</th><th class="num">Size</th><th class="num">Memory</th>
+          </tr></thead>
+          <tbody id="keys-body"></tbody>
+        </table>
+      </div>
+      <div class="card-body" style="display:flex;gap:12px;align-items:center">
+        <button class="btn" id="load-more">Load more</button>
+        <span class="hint" id="cursor-hint"></span>
+      </div>
+    </div>
+
+    <p class="hint" style="text-align:center;margin:26px 0">
+      Counters come from <code>INFO</code> and <code>DBSIZE</code> and are exact.
+      TTL, type, prefix, memory and idle breakdowns cannot be read from Redis, so they come from a bounded
+      <code>SCAN</code> sample — every one of them says how much of the keyspace it saw.
+    </p>
+    </div><!-- /view-dashboard -->
+
+    <!-- Connected clients. Server-wide, not per-database: CLIENT LIST reports every
+         connection to the instance, and each row carries the db it happens to be on. -->
+    <div id="view-clients" class="hidden">
+      <div class="tiles" id="client-tiles"></div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Connection mix</h2>
+          <span class="hint" id="clients-hint"></span>
+        </div>
+        <div class="card-body charts">
+          <div>
+            <div class="chart-title">Clients per database</div>
+            <div class="chart-sub">from the db field of each connection</div>
+            <div class="bars" id="chart-client-db"></div>
+          </div>
+          <div>
+            <div class="chart-title">Clients by name</div>
+            <div class="chart-sub" id="sub-client-name">set with CLIENT SETNAME</div>
+            <div class="bars" id="chart-client-name"></div>
+          </div>
+          <div>
+            <div class="chart-title">Last command</div>
+            <div class="chart-sub">what each connection ran most recently</div>
+            <div class="bars" id="chart-client-cmd"></div>
+          </div>
+          <div>
+            <div class="chart-title">Clients by idle time</div>
+            <div class="chart-sub">how long since each one spoke</div>
+            <div class="bars" id="chart-client-idle"></div>
+          </div>
+          <div>
+            <div class="chart-title">Connection flags</div>
+            <div class="chart-sub">N is an ordinary client</div>
+            <div class="bars" id="chart-client-flag"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-head">
+          <h2>Connections</h2>
+          <span class="hint" id="client-table-hint"></span>
+          <div class="spacer"></div>
+          <label class="field"><input type="checkbox" id="hide-self"> Hide this monitor</label>
+        </div>
+        <div class="scroll">
+          <table>
+            <thead><tr id="client-head"></tr></thead>
+            <tbody id="client-body"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <p class="hint" style="text-align:center;margin:26px 0">
+        This is a snapshot of <code>CLIENT LIST</code>, exact rather than sampled — but a list that
+        changes between one request and the next. Field availability depends on the server version:
+        Redis 5 reports no <code>laddr</code>, <code>tot-mem</code>, <code>user</code>,
+        <code>resp</code>, <code>watch</code> or library name, so those columns are hidden rather
+        than filled with dashes.
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- key detail drawer -->
+<div id="drawer-scrim" class="scrim hidden"></div>
+<aside id="drawer" class="drawer hidden">
+  <div class="drawer-head">
+    <div style="flex:1;min-width:0">
+      <div class="hint">Key</div>
+      <div class="keyname" id="d-key" style="max-width:none;font-size:14px;overflow-wrap:anywhere;white-space:normal"></div>
+    </div>
+    <button class="btn ghost" id="drawer-close">Close</button>
+  </div>
+  <div class="drawer-body">
+    <dl class="kv" id="d-meta"></dl>
+    <div class="chart-title" style="margin-bottom:6px">Value</div>
+    <div class="chart-sub" id="d-preview-note">—</div>
+    <div id="d-preview"></div>
+  </div>
+</aside>
+
+<!-- delete confirmation -->
+<div id="modal-scrim" class="scrim hidden"></div>
+<div id="modal" class="modal hidden">
+  <div class="modal-head">Delete keys</div>
+  <div class="modal-body">
+    <p class="hint" style="margin-top:0">
+      Every key is named explicitly — there is no pattern delete, so a stray <code>*</code> cannot
+      empty a database from here.
+    </p>
+    <ul class="keylist" id="modal-keys"></ul>
+    <div id="modal-code-wrap">
+      <div class="field" style="margin-bottom:8px">Authenticator code</div>
+      <input class="code-input" id="modal-code" inputmode="numeric" maxlength="6" autocomplete="off" placeholder="000000">
+      <p class="hint" style="margin-bottom:0">Single use: once a code authorises a delete it cannot authorise another.</p>
+    </div>
+    <div class="err" id="modal-err"></div>
+  </div>
+  <div class="modal-foot">
+    <button class="btn ghost" id="modal-cancel">Cancel</button>
+    <button class="btn danger" id="modal-confirm">Delete</button>
+  </div>
+</div>
+
+<script>
+"use strict";
+
+/* Everything below talks to /api/redis-monitor/*. Values from Redis are written
+   with textContent rather than innerHTML throughout: a key name or a cached value
+   is arbitrary bytes, and the one place it must never be interpreted is the page
+   that exists to inspect it. */
+
+const S = {
+  token: localStorage.getItem("rm.token") || "",
+  cfg: null,
+  session: null,
+  view: "dashboard",
+  db: 0,
+  clients: null,
+  clientSort: { field: "age", desc: true },
+  clientTimer: null,
+  overview: null,
+  stats: null,
+  cursor: "0",
+  hasMore: false,
+  rows: [],
+  selected: new Set(),
+  trendMetric: "keys",
+  trendDays: 14,
+  tick: 0,
+  timer: null,
+  busy: false,
+};
+
+const $ = (id) => document.getElementById(id);
+const fmt = new Intl.NumberFormat();
+const num = (value) => (value === null || value === undefined ? "—" : fmt.format(value));
+
+function el(tag, className, text) {
+  const node = document.createElement(tag);
+  if (className) node.className = className;
+  if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
+function clear(node) {
+  while (node.firstChild) node.removeChild(node.firstChild);
+  return node;
+}
+
+/* ── transport ─────────────────────────────────────────────────────────── */
+
+class ApiError extends Error {
+  constructor(status, message, data) {
+    super(message);
+    this.status = status;
+    this.data = data;
+  }
+}
+
+async function api(path, params) {
+  const url = new URL("/api/redis-monitor" + path, location.origin);
+  for (const [key, value] of Object.entries(params || {})) {
+    if (value !== undefined && value !== null && value !== "") url.searchParams.set(key, value);
+  }
+
+  const response = await fetch(url, {
+    headers: S.token ? { Authorization: "Bearer " + S.token } : {},
+  });
+
+  let body = null;
+  try { body = await response.json(); } catch (_) { /* an empty or non-JSON body */ }
+
+  if (!response.ok || !body || body.success !== true) {
+    throw new ApiError(response.status, (body && body.message) || response.statusText, body && body.data);
+  }
+
+  return body.data;
+}
+
+async function post(path, payload) {
+  const response = await fetch("/api/redis-monitor" + path, {
+    method: "POST",
+    headers: Object.assign({ "Content-Type": "application/json" }, S.token ? { Authorization: "Bearer " + S.token } : {}),
+    body: JSON.stringify(payload),
+  });
+
+  let body = null;
+  try { body = await response.json(); } catch (_) { /* ignore */ }
+
+  if (!response.ok || !body || body.success !== true) {
+    throw new ApiError(response.status, (body && body.message) || response.statusText, body && body.data);
+  }
+
+  return body.data;
+}
+
+/* ── the gate ─────────────────────────────────────────────────────────── */
+
+function showGate(message) {
+  $("gate").classList.remove("hidden");
+  $("app").classList.add("hidden");
+  stopAuto();
+
+  const login = Boolean(S.cfg && S.cfg.login_required);
+
+  $("gate-login").classList.toggle("hidden", !login);
+  $("gate-token-card").classList.toggle("hidden", login);
+  $("login-code-wrap").classList.toggle("hidden", !(S.cfg && S.cfg.requires_login_code));
+
+  $("gate-note").textContent = login
+    ? "A bearer token also works for scripts: send it as Authorization: Bearer …"
+    : "";
+
+  if (login) {
+    $("login-err").textContent = message || "";
+    $("login-pass").value = "";
+    $("login-code").value = "";
+    ($("login-user").value ? $("login-pass") : $("login-user")).focus();
+  } else {
+    $("gate-err").textContent = message || "";
+    $("gate-token").value = "";
+    $("gate-token").focus();
+  }
+}
+
+$("login-go").addEventListener("click", async () => {
+  const username = $("login-user").value.trim();
+  const password = $("login-pass").value;
+  const code = $("login-code").value.trim();
+
+  if (!username || !password) {
+    $("login-err").textContent = "Enter both a username and a password.";
+    return;
+  }
+
+  if (S.cfg.requires_login_code && code.length !== 6) {
+    $("login-err").textContent = "Enter the six digits your authenticator is showing.";
+    return;
+  }
+
+  $("login-go").disabled = true;
+
+  try {
+    const session = await post("/login", { username, password, code });
+
+    S.token = session.token;
+    localStorage.setItem("rm.token", session.token);
+
+    await enter();
+  } catch (error) {
+    // 401 is a wrong credential; anything else (a spent code, a rate limit) is
+    // worth showing verbatim, because the message says what to do about it.
+    $("login-err").textContent = error.message;
+  } finally {
+    $("login-go").disabled = false;
+  }
+});
+
+for (const id of ["login-user", "login-pass", "login-code"]) {
+  $(id).addEventListener("keydown", (event) => {
+    if (event.key === "Enter") $("login-go").click();
+  });
+}
+
+$("gate-go").addEventListener("click", async () => {
+  const token = $("gate-token").value.trim();
+  if (!token) { $("gate-err").textContent = "Enter the token."; return; }
+
+  S.token = token;
+
+  try {
+    await requireSession();
+    localStorage.setItem("rm.token", token);
+    await enter();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      S.token = "";
+      $("gate-err").textContent = "That token was rejected.";
+      return;
+    }
+    // Anything else — Redis down, for instance — is not the token's fault, so let
+    // the dashboard open and show the real problem.
+    localStorage.setItem("rm.token", token);
+    await enter();
+  }
+});
+
+$("gate-token").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") $("gate-go").click();
+});
+
+$("forget").addEventListener("click", async () => {
+  // Revoke server-side first, so signing out really ends the session rather than
+  // just forgetting where it was written down.
+  try { await post("/logout", {}); } catch (_) { /* an expired session is already gone */ }
+
+  localStorage.removeItem("rm.token");
+  S.token = "";
+  S.session = null;
+  $("whoami").textContent = "";
+  showGate("");
+});
+
+function enterApp() {
+  $("gate").classList.add("hidden");
+  $("app").classList.remove("hidden");
+}
+
+/* ── boot ─────────────────────────────────────────────────────────────── */
+
+// requireSession asks who we are. It is the cheapest authenticated call there is,
+// so it is what decides between "show the dashboard" and "show the gate" without
+// paying for a full overview to find out.
+async function requireSession() {
+  S.session = await api("/session");
+  return S.session;
+}
+
+function renderWhoami() {
+  const badge = $("whoami");
+
+  if (!S.session) { badge.textContent = ""; return; }
+
+  if (S.session.kind === "session") {
+    const until = S.session.expires_at
+      ? " · until " + new Date(S.session.expires_at * 1000).toLocaleTimeString()
+      : "";
+    badge.textContent = (S.session.username || "signed in") + until;
+    return;
+  }
+
+  badge.textContent = S.session.kind === "dev" ? "dev mode · no auth" : "static token";
+}
+
+// start reads /config, which needs no credential — the page has to know which
+// login form to draw before anybody can log in.
+async function start() {
+  S.cfg = await api("/config");
+  S.db = S.cfg.default_database;
+  S.trendDays = Math.min(14, S.cfg.history_days);
+
+  buildControls(S.cfg);
+
+  if (!S.cfg.enabled) show($("disabled-note"), "This monitor is disabled (REDIS_MONITOR_ENABLED=false).");
+
+  try {
+    await requireSession();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      showGate(S.token ? "That session has expired. Sign in again." : "");
+      return;
+    }
+    throw error;
+  }
+
+  await enter();
+}
+
+// enter opens the dashboard for an authenticated caller.
+async function enter() {
+  enterApp();
+  renderWhoami();
+  routeFromHash();
+
+  await refreshAll(false);
+  startAuto();
+}
+
+function buildControls(cfg) {
+  const dbSelect = clear($("db-select"));
+  for (const db of cfg.databases) {
+    dbSelect.appendChild(el("option", null, "db" + db)).value = String(db);
+  }
+  dbSelect.value = String(cfg.default_database);
+
+  const typeSelect = $("type-filter");
+  clear(typeSelect).appendChild(el("option", null, "Any type")).value = "";
+  for (const type of cfg.types) {
+    typeSelect.appendChild(el("option", null, type)).value = type;
+  }
+
+  const perPage = clear($("per-page"));
+  for (const size of [25, 50, 100, 200].filter((n) => n <= cfg.max_page_size)) {
+    perPage.appendChild(el("option", null, String(size))).value = String(size);
+  }
+  perPage.value = String(cfg.page_size);
+
+  const range = clear($("trend-range"));
+  for (const days of [7, 14, 30].filter((n) => n <= cfg.history_days)) {
+    const button = el("button", days === S.trendDays ? "on" : null, days + "d");
+    button.dataset.days = String(days);
+    range.appendChild(button);
+  }
+
+  $("trend-card").classList.toggle("hidden", !cfg.history_enabled);
+
+  if (!cfg.can_delete) {
+    $("delete-selected").classList.add("hidden");
+  }
+
+  $("modal-code-wrap").classList.toggle("hidden", !cfg.requires_code);
+}
+
+function show(node, message) {
+  node.textContent = message;
+  node.classList.remove("hidden");
+}
+
+/* ── refresh cycle ────────────────────────────────────────────────────── */
+
+async function refreshAll(fresh) {
+  if (S.busy) return;
+  S.busy = true;
+  $("refresh").disabled = true;
+
+  try {
+    if (S.view === "clients") {
+      await loadClients(fresh);
+      return;
+    }
+
+    await loadOverview(fresh);
+    await loadStats(fresh);
+    await loadNamespaces(fresh);
+    await reloadKeys();
+  } finally {
+    S.busy = false;
+    $("refresh").disabled = false;
+  }
+}
+
+/* Metrics every tick, the deep sample every other one, and the key table never:
+   refreshing it under the operator would lose their place in the scan.
+
+   The clients view gets its own faster timer. Connections come and go in seconds,
+   so a 30s cadence there would show a list that is mostly history — but paying for
+   that rate while nobody is looking at it would be waste, hence two timers rather
+   than one fast one. */
+function startAuto() {
+  stopAuto();
+
+  S.timer = setInterval(async () => {
+    if (!$("auto").checked || S.busy || S.view !== "dashboard") return;
+    S.tick++;
+    await loadOverview(false);
+    if (S.tick % 2 === 0) await loadStats(false);
+  }, 30000);
+
+  S.clientTimer = setInterval(async () => {
+    if (!$("auto").checked || S.busy || S.view !== "clients") return;
+    await loadClients(false);
+  }, 10000);
+}
+
+function stopAuto() {
+  if (S.timer) clearInterval(S.timer);
+  if (S.clientTimer) clearInterval(S.clientTimer);
+  S.timer = null;
+  S.clientTimer = null;
+}
+
+/* ── view routing ─────────────────────────────────────────────────────── */
+
+function routeFromHash() {
+  setView(location.hash === "#clients" ? "clients" : "dashboard");
+}
+
+function setView(view) {
+  S.view = view;
+
+  $("view-dashboard").classList.toggle("hidden", view !== "dashboard");
+  $("view-clients").classList.toggle("hidden", view !== "clients");
+
+  for (const button of $("views").children) {
+    button.classList.toggle("on", button.dataset.view === view);
+  }
+
+  // The dashboard's per-database selector means nothing on a server-wide list.
+  $("db-select").disabled = view === "clients";
+
+  if (view === "clients" && !S.clients) loadClients(false);
+}
+
+$("views").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+
+  location.hash = button.dataset.view === "clients" ? "#clients" : "";
+  setView(button.dataset.view);
+
+  if (button.dataset.view === "clients") loadClients(false);
+});
+
+window.addEventListener("hashchange", routeFromHash);
+
+function offline(error) {
+  const dot = $("conn-dot");
+  dot.classList.add("down");
+  $("conn-text").textContent = "unreachable";
+  show($("offline"), "Redis is not reachable — " + error.message);
+}
+
+function online(connection) {
+  $("conn-dot").classList.remove("down");
+  $("conn-text").textContent = connection.host + ":" + connection.port + " · db" + connection.database;
+  $("offline").classList.add("hidden");
+}
+
+function handle(error) {
+  if (error instanceof ApiError && error.status === 401) {
+    showGate("The token was rejected. Enter it again.");
+    return true;
+  }
+  if (error instanceof ApiError && error.status === 404) {
+    show($("disabled-note"), "This monitor is disabled (REDIS_MONITOR_ENABLED=false).");
+    return true;
+  }
+  offline(error);
+  return true;
+}
+
+/* ── overview ─────────────────────────────────────────────────────────── */
+
+async function loadOverview(fresh) {
+  try {
+    const data = await api("/overview", { db: S.db, fresh: fresh ? 1 : "" });
+    S.overview = data;
+    online(data.connection);
+    renderTiles(data);
+    renderOverviewCharts(data);
+  } catch (error) {
+    handle(error);
+  }
+}
+
+function tile(key, value, sub, percent) {
+  const node = el("div", "tile");
+  node.appendChild(el("div", "k", key));
+  node.appendChild(el("div", "v", value));
+  node.appendChild(el("div", "s", sub || " "));
+
+  if (percent !== undefined && percent !== null) {
+    const meter = el("div", "meter");
+    const fill = el("i");
+    fill.style.width = Math.min(100, Math.max(0, percent)) + "%";
+    meter.appendChild(fill);
+    node.appendChild(meter);
+  }
+
+  return node;
+}
+
+function uptime(seconds) {
+  if (!seconds) return "—";
+  const days = Math.floor(seconds / 86400);
+  const hours = Math.floor((seconds % 86400) / 3600);
+  if (days > 0) return days + "d " + hours + "h";
+  const minutes = Math.floor((seconds % 3600) / 60);
+  return hours + "h " + minutes + "m";
+}
+
+function renderTiles(data) {
+  const host = clear($("tiles"));
+
+  host.appendChild(tile("Keys in db" + data.connection.database, num(data.keyspace.current_db_keys),
+    num(data.sample.volatile_keys) + " with a TTL"));
+
+  host.appendChild(tile("Memory used", data.memory.used_human,
+    data.memory.max > 0 ? "of " + data.memory.max_human : "no maxmemory limit",
+    data.memory.used_percent));
+
+  host.appendChild(tile("Ops / sec", num(data.throughput.ops_per_sec),
+    num(data.throughput.total_commands) + " commands total"));
+
+  host.appendChild(tile("Hit rate",
+    data.throughput.hit_rate === null ? "—" : data.throughput.hit_rate + "%",
+    num(data.throughput.keyspace_hits) + " hits · " + num(data.throughput.keyspace_misses) + " misses",
+    data.throughput.hit_rate));
+
+  host.appendChild(tile("Clients", num(data.clients.connected),
+    num(data.clients.blocked) + " blocked"));
+
+  host.appendChild(tile("Redis " + data.server.version, uptime(data.server.uptime_seconds),
+    data.server.role + " · " + data.memory.policy));
+
+  host.appendChild(tile("Evicted / expired",
+    num(data.throughput.evicted_keys) + " / " + num(data.throughput.expired_keys),
+    "since the server started"));
+
+  host.appendChild(tile("Fragmentation", (data.memory.fragmentation_ratio || 0).toFixed(2),
+    "rss " + data.memory.rss_human));
+}
+
+function renderBars(host, rows, options) {
+  const settings = options || {};
+  clear(host);
+
+  if (!rows || rows.length === 0) {
+    host.appendChild(el("div", "empty", settings.empty || "Nothing to show."));
+    return;
+  }
+
+  const largest = Math.max(1, ...rows.map((row) => row.count || 0));
+
+  for (const row of rows) {
+    const bar = el("div", "bar");
+    bar.appendChild(el("div", "lbl", row.label)).title = row.label;
+
+    const track = el("div", "track");
+    const fill = el("i");
+    fill.style.width = ((row.count || 0) / largest * 100).toFixed(2) + "%";
+    track.appendChild(fill);
+    bar.appendChild(track);
+
+    bar.appendChild(el("div", "num", row.human || num(row.count)));
+
+    if (settings.onClick) {
+      bar.style.cursor = "pointer";
+      bar.addEventListener("click", () => settings.onClick(row));
+    }
+
+    host.appendChild(bar);
+  }
+}
+
+function sampleCaption(sample) {
+  if (!sample.truncated) return "exact — the whole keyspace was sampled";
+  return "sampled " + num(sample.scanned) + " of " + num(sample.db_keys) + " keys";
+}
+
+function renderOverviewCharts(data) {
+  const sample = data.sample;
+
+  $("sample-hint").textContent = sampleCaption(sample);
+  $("sub-ttl").textContent = num(sample.volatile_keys) + " of " + num(sample.scanned) + " sampled keys expire";
+  $("sub-type").textContent = sample.types.length + " types present";
+  $("sub-prefix").textContent = num(sample.distinct_prefixes) + " distinct prefixes";
+
+  renderBars($("chart-ttl"), sample.ttl_buckets);
+  renderBars($("chart-type"), sample.types);
+  renderBars($("chart-prefix"), sample.prefixes, {
+    onClick: (row) => {
+      if (row.label === "Other" || row.label === "(no prefix)") return;
+      $("pattern").value = row.label.replace(/([\\*?\[\]^])/g, "\\$1") + "*";
+      reloadKeys();
+    },
+  });
+
+  renderBars($("chart-db"), (data.keyspace.databases || []).map((entry) => ({
+    label: entry.label,
+    count: entry.keys,
+  })), { empty: "Every database is empty." });
+}
+
+/* ── analytics ────────────────────────────────────────────────────────── */
+
+async function loadStats(fresh) {
+  try {
+    const data = await api("/stats", { db: S.db, days: S.trendDays, fresh: fresh ? 1 : "" });
+    S.stats = data;
+    renderStats(data);
+    renderTrend(data.history);
+  } catch (error) {
+    handle(error);
+  }
+}
+
+function renderCols(host, axis, rows, options) {
+  const settings = options || {};
+  clear(host);
+  clear(axis);
+
+  if (!rows || rows.length === 0) {
+    host.appendChild(el("div", "empty", settings.empty || "Nothing recorded yet."));
+    return;
+  }
+
+  const values = rows.map((row) => Number(settings.value ? settings.value(row) : row.count) || 0);
+  const largest = Math.max(1, ...values);
+
+  rows.forEach((row, index) => {
+    const value = values[index];
+    // A slot with no reading is not a zero. It renders as a baseline tick so a gap
+    // in the record cannot be mistaken for an empty keyspace.
+    const missing = settings.missing ? settings.missing(row) : false;
+
+    const column = el("div", missing ? "col void" : "col");
+    const fill = el("i");
+    fill.style.height = missing ? "3px" : Math.max(2, value / largest * 100) + "%";
+    column.appendChild(fill);
+    column.title = (row.label || row.slot) + ": " + (missing ? "not recorded" : (settings.tip ? settings.tip(row, value) : num(value)));
+    host.appendChild(column);
+
+    axis.appendChild(el("span", null, index % settings.every === 0 ? row.short : ""));
+  });
+}
+
+function renderStats(data) {
+  const sample = data.sample;
+
+  $("stats-hint").textContent = sample.truncated
+    ? "sampled " + num(sample.scanned) + " of " + num(sample.db_keys) + " keys (" + sample.coverage_percent + "%)"
+    : "exact — the whole keyspace was sampled";
+
+  const strip = clear($("stats-strip"));
+  const item = (label, value) => {
+    const node = el("div");
+    node.appendChild(el("b", null, value));
+    node.appendChild(document.createTextNode(label));
+    strip.appendChild(node);
+  };
+
+  item("volatile keys", num(data.totals.volatile));
+  item("persistent keys", num(data.totals.persistent));
+  item("expiring in 24h", num(data.totals.expiring_24h));
+  item("namespaces", num(data.totals.distinct_namespaces));
+  item("sampled memory", data.totals.sampled_memory_human);
+  item("avg key size", data.totals.avg_key_memory_human || "—");
+  item("estimated keyspace", data.totals.estimated_memory_human || "—");
+
+  const byDay = data.charts.expiry_by_day;
+  $("sub-expiry-day").textContent =
+    num(byDay.total) + " keys expire · " + num(byDay.no_expiry) + " never · " + num(byDay.beyond_window) + " past the window";
+  renderCols($("chart-expiry-day"), $("axis-expiry-day"), byDay.rows, { every: 2 });
+
+  $("sub-expiry-hour").textContent = num(data.charts.expiry_by_hour.total) + " keys expire in the next 24 hours";
+  renderCols($("chart-expiry-hour"), $("axis-expiry-hour"), data.charts.expiry_by_hour.rows, { every: 3 });
+
+  $("sub-ns-memory").textContent = sample.has_memory
+    ? "sampled MEMORY USAGE per namespace"
+    : "MEMORY USAGE is unavailable on this server";
+  renderBars($("chart-ns-memory"), sample.has_memory ? data.charts.memory_by_namespace : [], {
+    empty: "This server does not answer MEMORY USAGE.",
+  });
+
+  $("sub-ns-keys").textContent = "top " + (data.charts.keys_by_namespace.length) + " by key count";
+  renderBars($("chart-ns-keys"), data.charts.keys_by_namespace);
+
+  $("sub-size").textContent = sample.has_memory ? "MEMORY USAGE buckets" : "needs MEMORY USAGE";
+  renderBars($("chart-size"), sample.has_memory ? data.charts.size_buckets : [], {
+    empty: "This server does not answer MEMORY USAGE.",
+  });
+
+  $("sub-idle").textContent = sample.has_idle ? "OBJECT IDLETIME buckets" : "needs OBJECT IDLETIME";
+  renderBars($("chart-idle"), sample.has_idle ? data.charts.idle_buckets : [], {
+    empty: "OBJECT IDLETIME is unavailable — it errors under an LFU eviction policy.",
+  });
+
+  renderBreakdown(data);
+}
+
+function renderBreakdown(data) {
+  const rows = data.tables.namespaces || [];
+  $("breakdown-hint").textContent = rows.length + " namespaces · " + (data.tables.largest_keys || []).length + " largest keys";
+
+  const body = clear($("ns-body"));
+
+  if (rows.length === 0) {
+    const empty = el("tr");
+    const cell = el("td", null, "Nothing sampled.");
+    cell.colSpan = 9;
+    empty.appendChild(cell);
+    body.appendChild(empty);
+  }
+
+  for (const row of rows) {
+    const tr = el("tr");
+    tr.appendChild(el("td", "keyname", row.namespace));
+    tr.appendChild(el("td", "num", num(row.count)));
+    tr.appendChild(el("td", "num", row.share === null ? "—" : row.share + "%"));
+    tr.appendChild(el("td", "num", row.memory_human));
+    tr.appendChild(el("td", "num", row.avg_memory_human || "—"));
+    tr.appendChild(el("td", "num", num(row.volatile)));
+    tr.appendChild(el("td", "num", row.avg_ttl_label));
+    tr.appendChild(el("td", "num", row.idle_max_label || "—"));
+
+    const action = el("td");
+    if (row.pattern) {
+      const browse = el("button", "link", "browse");
+      browse.addEventListener("click", () => {
+        $("pattern").value = row.pattern;
+        reloadKeys();
+        $("keys-body").scrollIntoView({ behavior: "smooth", block: "center" });
+      });
+      action.appendChild(browse);
+    }
+    tr.appendChild(action);
+
+    body.appendChild(tr);
+  }
+
+  const largest = clear($("largest-body"));
+
+  for (const row of (data.tables.largest_keys || [])) {
+    const tr = el("tr");
+    tr.appendChild(el("td", "keyname", row.key)).title = row.key;
+    tr.appendChild(el("td")).appendChild(el("span", "pill", row.type));
+    tr.appendChild(el("td", "num", row.memory_human));
+    tr.appendChild(el("td", "num", row.ttl_label));
+
+    const action = el("td");
+    const inspect = el("button", "link", "inspect");
+    inspect.addEventListener("click", () => openKey(row.key));
+    action.appendChild(inspect);
+    tr.appendChild(action);
+
+    largest.appendChild(tr);
+  }
+}
+
+/* ── recorded trend ───────────────────────────────────────────────────── */
+
+function renderTrend(history) {
+  if (!history || !history.enabled) {
+    $("trend-card").classList.add("hidden");
+    return;
+  }
+
+  $("trend-card").classList.remove("hidden");
+
+  const since = history.recorded_from
+    ? "recording since " + new Date(history.recorded_from * 1000).toLocaleString()
+    : "nothing recorded yet";
+  $("trend-since").textContent = since;
+
+  const memory = S.trendMetric === "memory";
+  const value = (row) => (memory ? row.memory : row.keys) || 0;
+  const missing = (row) => !row.recorded;
+  const tip = (row) => (memory ? row.memory_human : num(row.keys));
+
+  $("trend-day-title").textContent = memory ? "Memory per day" : "Keys per day";
+  $("trend-hour-title").textContent = memory ? "Memory per hour" : "Keys per hour";
+
+  const recordedDays = history.by_day.filter((row) => row.recorded).length;
+  const recordedHours = history.by_hour.filter((row) => row.recorded).length;
+
+  $("trend-day-sub").textContent = recordedDays + " of " + history.by_day.length + " days recorded";
+  $("trend-hour-sub").textContent = recordedHours + " of " + history.by_hour.length + " hours recorded";
+
+  renderCols($("trend-day"), $("trend-day-axis"), history.by_day, { value, missing, tip, every: 3 });
+  renderCols($("trend-hour"), $("trend-hour-axis"), history.by_hour, { value, missing, tip, every: 6 });
+
+  const expiredRows = history.by_day.filter((row) => row.expired !== null);
+  $("trend-expired-sub").textContent = expiredRows.length + " days with a comparable reading";
+  renderCols($("trend-expired"), $("trend-expired-axis"), history.by_day, {
+    value: (row) => row.expired || 0,
+    missing: (row) => row.expired === null,
+    every: 3,
+    empty: "Needs two recorded points to compute a delta.",
+  });
+
+  show($("trend-note"),
+    "Redis keeps no history of its own, so this series is what the monitor has written down — one point at most every "
+    + history.interval + "s, on each metrics refresh. A flat baseline tick means nobody looked then, not zero keys."
+    + " Expired counters are deltas between consecutive readings and read null across a server restart.");
+}
+
+$("trend-metric").addEventListener("click", (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  S.trendMetric = button.dataset.metric;
+  for (const sibling of $("trend-metric").children) sibling.classList.toggle("on", sibling === button);
+  if (S.stats) renderTrend(S.stats.history);
+});
+
+$("trend-range").addEventListener("click", async (event) => {
+  const button = event.target.closest("button");
+  if (!button) return;
+  S.trendDays = Number(button.dataset.days);
+  for (const sibling of $("trend-range").children) sibling.classList.toggle("on", sibling === button);
+  await loadStats(false);
+});
+
+/* ── namespaces ───────────────────────────────────────────────────────── */
+
+async function loadNamespaces(fresh) {
+  try {
+    const data = await api("/namespaces", { db: S.db, fresh: fresh ? 1 : "" });
+    const select = clear($("ns-filter"));
+    select.appendChild(el("option", null, "All namespaces")).value = "";
+
+    for (const row of data.rows) {
+      const option = el("option", null, row.namespace + "  (" + num(row.count) + ")");
+      option.value = row.pattern;
+      select.appendChild(option);
+    }
+
+    if (data.unprefixed > 0) {
+      const note = el("option", null, "— " + num(data.unprefixed) + " keys have no namespace —");
+      note.disabled = true;
+      select.appendChild(note);
+    }
+  } catch (error) {
+    handle(error);
+  }
+}
+
+/* ── key browser ──────────────────────────────────────────────────────── */
+
+function keyQuery() {
+  return {
+    db: S.db,
+    pattern: $("pattern").value.trim(),
+    type: $("type-filter").value,
+    per_page: $("per-page").value,
+  };
+}
+
+async function reloadKeys() {
+  S.cursor = "0";
+  S.rows = [];
+  S.selected.clear();
+  $("select-all").checked = false;
+  clear($("keys-body"));
+  await fetchKeys();
+}
+
+async function fetchKeys() {
+  $("load-more").disabled = true;
+  $("load-more").textContent = "Loading…";
+
+  try {
+    const data = await api("/keys", Object.assign(keyQuery(), { cursor: S.cursor }));
+
+    S.cursor = data.cursor;
+    S.hasMore = data.has_more;
+    S.rows = S.rows.concat(data.rows);
+
+    appendKeyRows(data.rows);
+
+    $("keys-hint").textContent =
+      num(S.rows.length) + " shown of " + num(data.total_keys) + " keys in db" + data.database
+      + (data.type_filter && !data.server_filtered ? " · type filtered client-side (needs Redis 6 for SCAN TYPE)" : "");
+
+    $("cursor-hint").textContent = data.has_more
+      ? "cursor " + data.cursor + (data.scan_stopped ? " — the scan was cut short by its iteration cap" : "")
+      : "the scan wrapped around: this is every key that matched";
+
+    $("load-more").classList.toggle("hidden", !data.has_more);
+  } catch (error) {
+    handle(error);
+  } finally {
+    $("load-more").disabled = false;
+    $("load-more").textContent = "Load more";
+  }
+}
+
+function ttlClass(ttl) {
+  if (ttl < 0) return "ttl-none";
+  if (ttl <= 300) return "ttl-soon";
+  return "";
+}
+
+function appendKeyRows(rows) {
+  const body = $("keys-body");
+
+  if (rows.length === 0 && S.rows.length === 0) {
+    const empty = el("tr");
+    const cell = el("td", null, "No keys matched.");
+    cell.colSpan = 6;
+    empty.appendChild(cell);
+    body.appendChild(empty);
+    return;
+  }
+
+  for (const row of rows) {
+    const tr = el("tr");
+
+    const pick = el("td");
+    if (S.cfg.can_delete) {
+      const box = el("input");
+      box.type = "checkbox";
+      box.checked = S.selected.has(row.key);
+      box.addEventListener("change", () => {
+        if (box.checked) S.selected.add(row.key); else S.selected.delete(row.key);
+        renderSelection();
+      });
+      pick.appendChild(box);
+    }
+    tr.appendChild(pick);
+
+    const name = el("td", "keyname");
+    const open = el("button", "link", row.key);
+    open.addEventListener("click", () => openKey(row.key));
+    name.appendChild(open);
+    name.title = row.key;
+
+    if (row.redacted) {
+      name.appendChild(document.createTextNode(" "));
+      name.appendChild(el("span", "tag-red", "· value withheld"));
+    }
+    tr.appendChild(name);
+
+    tr.appendChild(el("td")).appendChild(el("span", "pill", row.type || "gone"));
+    tr.appendChild(el("td", "num " + ttlClass(row.ttl), row.ttl_label));
+    tr.appendChild(el("td", "num", row.size ? num(row.size.value) + " " + row.size.unit : "—"));
+    tr.appendChild(el("td", "num", row.memory_human || "—"));
+
+    body.appendChild(tr);
+  }
+}
+
+function renderSelection() {
+  const button = $("delete-selected");
+  const count = S.selected.size;
+
+  button.classList.toggle("hidden", count === 0 || !S.cfg.can_delete);
+  button.textContent = "Delete selected (" + count + ")";
+}
+
+$("select-all").addEventListener("change", (event) => {
+  const on = event.target.checked;
+  S.selected.clear();
+  if (on) for (const row of S.rows) S.selected.add(row.key);
+
+  for (const box of $("keys-body").querySelectorAll("input[type=checkbox]")) box.checked = on;
+  renderSelection();
+});
+
+$("apply").addEventListener("click", () => reloadKeys());
+$("pattern").addEventListener("keydown", (event) => { if (event.key === "Enter") reloadKeys(); });
+$("type-filter").addEventListener("change", () => reloadKeys());
+$("per-page").addEventListener("change", () => reloadKeys());
+$("load-more").addEventListener("click", () => fetchKeys());
+
+$("ns-filter").addEventListener("change", (event) => {
+  $("pattern").value = event.target.value;
+  reloadKeys();
+});
+
+$("db-select").addEventListener("change", async (event) => {
+  S.db = Number(event.target.value);
+  await refreshAll(false);
+});
+
+$("refresh").addEventListener("click", () => refreshAll(true));
+
+$("auto").addEventListener("change", (event) => {
+  if (event.target.checked) startAuto(); else stopAuto();
+});
+
+/* ── key detail drawer ────────────────────────────────────────────────── */
+
+function closeDrawer() {
+  $("drawer").classList.add("hidden");
+  $("drawer-scrim").classList.add("hidden");
+}
+
+$("drawer-close").addEventListener("click", closeDrawer);
+$("drawer-scrim").addEventListener("click", closeDrawer);
+
+document.addEventListener("keydown", (event) => {
+  if (event.key !== "Escape") return;
+  closeDrawer();
+  closeModal();
+});
+
+async function openKey(key) {
+  $("drawer").classList.remove("hidden");
+  $("drawer-scrim").classList.remove("hidden");
+  $("d-key").textContent = key;
+  clear($("d-meta"));
+  clear($("d-preview")).appendChild(el("span", "spin"));
+  $("d-preview-note").textContent = "reading…";
+
+  try {
+    const detail = await api("/key", { db: S.db, key });
+    renderDetail(detail);
+  } catch (error) {
+    $("d-preview-note").textContent = "";
+    clear($("d-preview")).appendChild(el("div", "notice bad", error.message));
+  }
+}
+
+function renderDetail(detail) {
+  const meta = clear($("d-meta"));
+  const pair = (label, value) => {
+    meta.appendChild(el("dt", null, label));
+    meta.appendChild(el("dd", null, value));
+  };
+
+  if (!detail.exists) {
+    pair("Status", "this key no longer exists");
+    $("d-preview-note").textContent = "";
+    clear($("d-preview")).appendChild(el("div", "notice", "The key was there when it was listed and is gone now — expired or deleted in between."));
+    return;
+  }
+
+  pair("Type", detail.type);
+  pair("TTL", detail.ttl_label + (detail.ttl >= 0 ? "  (" + num(detail.ttl) + "s)" : ""));
+  pair("Size", detail.size ? num(detail.size.value) + " " + detail.size.unit : "—");
+  pair("Memory", detail.memory_human || "not reported by this server");
+  pair("Encoding", detail.encoding || "not reported");
+  pair("Idle time", detail.idle_time === null ? "not reported" : detail.idle_time + "s");
+  pair("Namespace", detail.prefix);
+  pair("Database", "db" + detail.database);
+
+  const preview = detail.preview || {};
+  const host = clear($("d-preview"));
+
+  const shown = preview.total
+    ? num(preview.shown) + " of " + num(preview.total) + (preview.kind === "string" ? " bytes" : " items")
+    : "";
+  $("d-preview-note").textContent = [preview.kind, shown, preview.truncated ? "truncated" : ""].filter(Boolean).join(" · ");
+
+  if (preview.kind === "redacted" || preview.kind === "unsupported") {
+    host.appendChild(el("div", "notice warn", preview.note));
+    return;
+  }
+
+  if (preview.kind === "hash" || preview.kind === "zset") {
+    const table = el("table");
+    const head = el("thead");
+    const headRow = el("tr");
+    headRow.appendChild(el("th", null, preview.kind === "zset" ? "Member" : "Field"));
+    headRow.appendChild(el("th", null, preview.kind === "zset" ? "Score" : "Value"));
+    head.appendChild(headRow);
+    table.appendChild(head);
+
+    const body = el("tbody");
+    for (const entry of preview.pairs || []) {
+      const tr = el("tr");
+      tr.appendChild(el("td", "keyname", entry.field));
+      const value = el("td", null, entry.value);
+      value.style.whiteSpace = "pre-wrap";
+      value.style.overflowWrap = "anywhere";
+      tr.appendChild(value);
+      body.appendChild(tr);
+    }
+    table.appendChild(body);
+
+    const scroll = el("div", "scroll");
+    scroll.appendChild(table);
+    host.appendChild(scroll);
+    return;
+  }
+
+  if (preview.kind === "list" || preview.kind === "set") {
+    const table = el("table");
+    const body = el("tbody");
+    (preview.items || []).forEach((item, index) => {
+      const tr = el("tr");
+      tr.appendChild(el("td", "num", preview.kind === "list" ? String(index) : "·")).style.width = "48px";
+      const value = el("td", null, item);
+      value.style.whiteSpace = "pre-wrap";
+      value.style.overflowWrap = "anywhere";
+      value.style.fontFamily = "var(--mono)";
+      tr.appendChild(value);
+      body.appendChild(tr);
+    });
+    table.appendChild(body);
+
+    const scroll = el("div", "scroll");
+    scroll.appendChild(table);
+    host.appendChild(scroll);
+    return;
+  }
+
+  // string and stream both arrive as one blob. JSON is pretty-printed here rather
+  // than on the server, so the payload stays the bytes Redis actually holds.
+  host.appendChild(el("pre", "value", prettyIfJSON(preview.value || "")));
+}
+
+function prettyIfJSON(text) {
+  const trimmed = text.trim();
+  if (!trimmed || !"{[".includes(trimmed[0])) return text;
+
+  try {
+    return JSON.stringify(JSON.parse(trimmed), null, 2);
+  } catch (_) {
+    return text;
+  }
+}
+
+/* ── delete ───────────────────────────────────────────────────────────── */
+
+function closeModal() {
+  $("modal").classList.add("hidden");
+  $("modal-scrim").classList.add("hidden");
+}
+
+$("modal-cancel").addEventListener("click", closeModal);
+$("modal-scrim").addEventListener("click", closeModal);
+
+$("delete-selected").addEventListener("click", () => {
+  if (S.selected.size === 0) return;
+
+  const list = clear($("modal-keys"));
+  for (const key of S.selected) list.appendChild(el("li", null, key));
+
+  $("modal-err").textContent = "";
+  $("modal-code").value = "";
+  $("modal").classList.remove("hidden");
+  $("modal-scrim").classList.remove("hidden");
+
+  if (S.cfg.requires_code) $("modal-code").focus();
+});
+
+$("modal-confirm").addEventListener("click", async () => {
+  const keys = Array.from(S.selected);
+  const code = $("modal-code").value.trim();
+
+  if (S.cfg.requires_code && code.length !== 6) {
+    $("modal-err").textContent = "Enter the six digits your authenticator is showing.";
+    return;
+  }
+
+  $("modal-confirm").disabled = true;
+
+  try {
+    const result = await post("/keys/delete", { db: S.db, keys, code });
+    closeModal();
+
+    S.selected.clear();
+    renderSelection();
+
+    show($("offline"), "");
+    $("offline").classList.add("hidden");
+
+    await refreshAll(true);
+
+    $("keys-hint").textContent = "deleted " + result.deleted + " key(s)"
+      + (result.missing ? ", " + result.missing + " were already gone" : "");
+  } catch (error) {
+    $("modal-err").textContent = error.message;
+  } finally {
+    $("modal-confirm").disabled = false;
+  }
+});
+
+$("modal-code").addEventListener("keydown", (event) => {
+  if (event.key === "Enter") $("modal-confirm").click();
+});
+
+/* -- connected clients ------------------------------------------------- */
+
+// The columns, and what each one is worth showing. `field` names the optional
+// CLIENT LIST field a column depends on -- a column whose field this server does
+// not report is dropped rather than filled with dashes.
+const CLIENT_COLUMNS = [
+  { key: "id",     label: "ID",        num: true,  sort: (r) => r.id },
+  { key: "addr",   label: "Address",   mono: true, sort: (r) => r.addr },
+  { key: "laddr",  label: "Local",     mono: true, field: "laddr", sort: (r) => r.laddr },
+  { key: "name",   label: "Name",      mono: true, sort: (r) => r.name },
+  { key: "db",     label: "DB",        num: true,  sort: (r) => r.db },
+  { key: "age",    label: "Age",       num: true,  sort: (r) => r.age },
+  { key: "idle",   label: "Idle",      num: true,  sort: (r) => r.idle },
+  { key: "flags",  label: "Flags",     sort: (r) => r.flags },
+  { key: "cmd",    label: "Last cmd",  mono: true, sort: (r) => r.cmd },
+  { key: "sub",    label: "Sub",       num: true,  sort: (r) => r.sub + r.psub },
+  { key: "multi",  label: "MULTI",     num: true,  sort: (r) => r.multi },
+  { key: "watch",  label: "Watch",     num: true,  field: "watch", sort: (r) => r.watch || 0 },
+  { key: "qbuf",   label: "Query buf", num: true,  sort: (r) => r.qbuf },
+  { key: "omem",   label: "Out mem",   num: true,  sort: (r) => r.omem },
+  { key: "totmem", label: "Total mem", num: true,  field: "tot_mem", sort: (r) => r.tot_mem || 0 },
+  { key: "user",   label: "User",      mono: true, field: "user", sort: (r) => r.user || "" },
+  { key: "resp",   label: "RESP",      num: true,  field: "resp", sort: (r) => r.resp || 0 },
+  { key: "lib",    label: "Library",   mono: true, field: "lib", sort: (r) => r.lib },
+];
+
+async function loadClients(fresh) {
+  try {
+    const data = await api("/clients", { db: S.db, fresh: fresh ? 1 : "" });
+    S.clients = data;
+    renderClients(data);
+    online(Object.assign({ database: S.db }, S.cfg.connection));
+  } catch (error) {
+    handle(error);
+  }
+}
+
+function renderClients(data) {
+  const totals = data.totals;
+  const host = clear($("client-tiles"));
+
+  // "not reported" rather than "no limit": there is always a maxclients ceiling,
+  // but Redis only puts it in INFO from 7.0 and CONFIG GET can be withheld.
+  host.appendChild(tile("Connected", num(totals.connected),
+    totals.maxclients > 0 ? "of " + num(totals.maxclients) + " maxclients" : "maxclients not reported",
+    totals.used_percent));
+
+  host.appendChild(tile("Listed here", num(data.listed),
+    data.truncated ? "capped -- there are more" : "the whole list"));
+
+  host.appendChild(tile("Blocked", num(totals.blocked), "waiting in a blocking command"));
+  host.appendChild(tile("Databases in use", num(totals.databases), num(totals.subscriptions) + " subscriptions"));
+  host.appendChild(tile("In MULTI", num(totals.in_transaction), num(totals.watching) + " watching keys"));
+
+  host.appendChild(tile("Output buffers", totals.output_memory_human,
+    totals.total_memory_human ? totals.total_memory_human + " total" : "tot-mem not reported"));
+
+  host.appendChild(tile("Longest idle", totals.longest_idle_label,
+    "oldest connection " + totals.oldest_age_label));
+
+  host.appendChild(tile("This monitor", num(totals.own_connections),
+    totals.monitors > 0 ? num(totals.monitors) + " MONITOR clients" : "of its own connections"));
+
+  $("clients-hint").textContent =
+    "snapshot at " + new Date(data.generated_at * 1000).toLocaleTimeString()
+    + (data.truncated ? " - list capped at " + data.listed : "");
+
+  renderBars($("chart-client-db"), data.charts.by_database);
+  renderBars($("chart-client-name"), data.charts.by_name);
+  renderBars($("chart-client-cmd"), data.charts.by_command);
+  renderBars($("chart-client-idle"), data.charts.idle_buckets);
+  renderBars($("chart-client-flag"), data.charts.by_flag);
+
+  $("sub-client-name").textContent = data.charts.by_name.some((row) => row.label === "(unnamed)")
+    ? "unnamed connections set no CLIENT SETNAME"
+    : "every connection is named";
+
+  renderClientTable(data);
+}
+
+function visibleClientColumns(fields) {
+  return CLIENT_COLUMNS.filter((column) => !column.field || fields[column.field]);
+}
+
+function renderClientTable(data) {
+  const columns = visibleClientColumns(data.fields);
+  const head = clear($("client-head"));
+
+  for (const column of columns) {
+    const arrow = S.clientSort.field === column.key ? (S.clientSort.desc ? " \u2193" : " \u2191") : "";
+    const th = el("th", column.num ? "num" : null, column.label + arrow);
+    th.style.cursor = "pointer";
+
+    th.addEventListener("click", () => {
+      if (S.clientSort.field === column.key) {
+        S.clientSort.desc = !S.clientSort.desc;
+      } else {
+        S.clientSort = { field: column.key, desc: true };
+      }
+      renderClientTable(S.clients);
+    });
+
+    head.appendChild(th);
+  }
+
+  let rows = data.rows.slice();
+
+  if ($("hide-self").checked) rows = rows.filter((row) => !row.self);
+
+  const column = CLIENT_COLUMNS.find((candidate) => candidate.key === S.clientSort.field);
+
+  if (column) {
+    rows.sort((a, b) => {
+      const left = column.sort(a);
+      const right = column.sort(b);
+      const order = typeof left === "string"
+        ? String(left).localeCompare(String(right))
+        : left - right;
+      return S.clientSort.desc ? -order : order;
+    });
+  }
+
+  $("client-table-hint").textContent = rows.length + " of " + data.rows.length + " connections shown";
+
+  const body = clear($("client-body"));
+
+  if (rows.length === 0) {
+    const empty = el("tr");
+    const cell = el("td", null, "No connections matched.");
+    cell.colSpan = columns.length;
+    empty.appendChild(cell);
+    body.appendChild(empty);
+    return;
+  }
+
+  for (const row of rows) {
+    const tr = el("tr");
+    for (const col of columns) tr.appendChild(clientCell(row, col));
+    body.appendChild(tr);
+  }
+}
+
+function clientCell(row, column) {
+  const className = [column.num ? "num" : "", column.mono ? "keyname" : ""].filter(Boolean).join(" ");
+
+  switch (column.key) {
+    case "id":
+      return el("td", className, String(row.id));
+
+    case "addr": {
+      const cell = el("td", className);
+      cell.appendChild(document.createTextNode(row.addr));
+      // The monitor's own connections are labelled, so an operator is never left
+      // wondering who is scanning their keyspace.
+      if (row.self) {
+        cell.appendChild(document.createTextNode(" "));
+        cell.appendChild(el("span", "pill", "this monitor"));
+      }
+      return cell;
+    }
+
+    case "laddr":
+      return el("td", className, row.laddr || "\u2014");
+
+    case "name":
+      return el("td", className, row.name || "\u2014");
+
+    case "db":
+      return el("td", className, "db" + row.db);
+
+    case "age":
+      return el("td", className, row.age_label);
+
+    case "idle":
+      // Idle is the column an operator scans for a leaked connection, so it earns
+      // the same "getting stale" highlight the key table gives a short TTL.
+      return el("td", className + (row.idle >= 3600 ? " ttl-soon" : ""), row.idle_label);
+
+    case "flags": {
+      const cell = el("td", className);
+      for (const label of row.flag_labels || []) {
+        cell.appendChild(el("span", "pill", label));
+        cell.appendChild(document.createTextNode(" "));
+      }
+      cell.title = "flags=" + row.flags;
+      return cell;
+    }
+
+    case "cmd":
+      return el("td", className, row.cmd || "\u2014");
+
+    case "sub":
+      return el("td", className, row.sub + row.psub === 0 ? "\u2014" : num(row.sub + row.psub));
+
+    case "multi":
+      return el("td", className, row.multi < 0 ? "\u2014" : num(row.multi));
+
+    case "watch":
+      return el("td", className, row.watch ? num(row.watch) : "\u2014");
+
+    case "qbuf":
+      return el("td", className, num(row.qbuf));
+
+    case "omem":
+      return el("td", className, row.omem === 0 ? "\u2014" : row.omem_human);
+
+    case "totmem":
+      return el("td", className, row.tot_mem_human || "\u2014");
+
+    case "user":
+      return el("td", className, row.user || "\u2014");
+
+    case "resp":
+      return el("td", className, row.resp === null || row.resp === undefined ? "\u2014" : String(row.resp));
+
+    case "lib":
+      return el("td", className, row.lib || "\u2014");
+
+    default:
+      return el("td", className, "\u2014");
+  }
+}
+
+$("hide-self").addEventListener("change", () => {
+  if (S.clients) renderClientTable(S.clients);
+});
+
+/* ── start ────────────────────────────────────────────────────────────── */
+
+(async () => {
+  try {
+    await start();
+  } catch (error) {
+    if (error instanceof ApiError && error.status === 401) {
+      showGate(S.token ? "The stored credential was rejected." : "");
+      return;
+    }
+
+    if (error instanceof ApiError && error.status === 404) {
+      enterApp();
+      show($("disabled-note"), "This monitor is disabled (REDIS_MONITOR_ENABLED=false).");
+      return;
+    }
+
+    // Redis being down must still open the dashboard — showing that is the point.
+    enterApp();
+    handle(error);
+  }
+})();
+</script>
+</body>
+</html>

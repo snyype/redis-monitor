@@ -1,0 +1,9 @@
+.git
+.gitignore
+.env
+data/
+*.exe
+redis-monitor
+README.md
+Dockerfile
+.dockerignore

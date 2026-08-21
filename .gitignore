@@ -1,0 +1,9 @@
+# Local configuration — .env.example is the template that is committed.
+.env
+
+# The recorded trend series.
+data/
+
+# Build output.
+*.exe
+/redis-monitor
