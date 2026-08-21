@@ -1,7 +1,11 @@
 .git
 .gitignore
+.github
+scripts
 .env
 data/
+ci-data/
+dist/
 *.exe
 redis-monitor
 README.md

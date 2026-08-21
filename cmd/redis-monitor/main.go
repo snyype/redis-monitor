@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"runtime"
 	"syscall"
 	"time"
 
@@ -26,14 +27,34 @@ import (
 	"redismonitor/internal/web"
 )
 
+// Build metadata, stamped in at link time by the release workflow:
+//
+//	-ldflags "-X main.version=v1.2.3 -X main.commit=abc1234 -X main.builtAt=..."
+//
+// A binary that cannot say which build it is turns "did the fix ship?" into
+// guesswork, so this is reported by -version and logged at every start.
+var (
+	version = "dev"
+	commit  = "none"
+	builtAt = "unknown"
+)
+
 func main() {
 	envFile := flag.String("env", ".env", "path to the .env file; missing is fine when the environment is already set")
 	newSecret := flag.Bool("totp-secret", false, "print a fresh authenticator secret and its otpauth:// URI, then exit")
 	account := flag.String("totp-account", "redis-monitor", "account label for the generated otpauth:// URI")
 	issuer := flag.String("totp-issuer", "Redis Monitor", "issuer label for the generated otpauth:// URI")
+	showVersion := flag.Bool("version", false, "print the build version, then exit")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
+
+	if *showVersion {
+		fmt.Printf("redis-monitor %s (commit %s, built %s, %s)\n",
+			version, commit, builtAt, runtime.Version())
+
+		return
+	}
 
 	if *newSecret {
 		if err := printSecret(*account, *issuer); err != nil {
@@ -106,14 +127,21 @@ func run(envFile string, log *slog.Logger) error {
 		log.Info("redis reachable", "addr", cfg.Redis.Addr(), "database", cfg.DefaultDatabase())
 	}
 
-	if cfg.Token == "" {
-		log.Warn("running with no bearer token: REDIS_MONITOR_DEV is set, do not do this anywhere real")
+	// Only genuinely credential-less runs deserve the warning: a token-free instance
+	// with password login configured is a normal setup, not a mistake.
+	if cfg.Token == "" && !cfg.CanLogin() {
+		log.Warn("running with no credential at all: REDIS_MONITOR_DEV is set, do not do this anywhere real")
 	}
 
 	errs := make(chan error, 1)
 
 	go func() {
-		log.Info("listening", "addr", cfg.HTTPAddr, "enabled", cfg.Enabled)
+		log.Info("listening",
+			"addr", cfg.HTTPAddr,
+			"enabled", cfg.Enabled,
+			"version", version,
+			"commit", commit,
+		)
 
 		if err := httpServer.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
 			errs <- err
