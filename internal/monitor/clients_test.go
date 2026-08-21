@@ -10,7 +10,7 @@ import (
 // user, resp, watch or lib-name.
 const redis5List = "id=10 addr=127.0.0.1:57540 fd=12 name= age=935 idle=88 flags=N db=0 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=0 obl=0 oll=0 omem=0 events=r cmd=ttl\n" +
 	"id=11 addr=127.0.0.1:63904 fd=9 name=redis-monitor age=640 idle=27 flags=N db=1 sub=0 psub=0 multi=-1 qbuf=0 qbuf-free=0 obl=0 oll=0 omem=0 events=r cmd=scan\n" +
-	"id=16 addr=127.0.0.1:59159 fd=13 name=predis age=445 idle=445 flags=N db=1 sub=2 psub=1 multi=3 qbuf=0 qbuf-free=0 obl=0 oll=0 omem=512 events=r cmd=get\n"
+	"id=16 addr=127.0.0.1:59159 fd=13 name=api-worker age=445 idle=445 flags=N db=1 sub=2 psub=1 multi=3 qbuf=0 qbuf-free=0 obl=0 oll=0 omem=512 events=r cmd=get\n"
 
 // redis7List carries the fields Redis 5 does not report.
 const redis7List = "id=42 addr=10.0.0.9:52310 laddr=10.0.0.1:6379 fd=8 name=app age=100 idle=0 flags=O db=3 sub=0 psub=0 ssub=0 multi=-1 watch=4 qbuf=26 qbuf-free=20448 argv-mem=10 tot-mem=20512 events=r cmd=client|list user=default redir=-1 resp=3 lib-name=jedis lib-ver=5.1.0\n"

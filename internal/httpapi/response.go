@@ -6,8 +6,8 @@ import (
 	"net/http"
 )
 
-// envelope is the response shape the PHP monitor uses — {success, data} — kept
-// identical so a payload from either implementation is directly comparable.
+// envelope is the one response shape every endpoint answers with, so a client has
+// exactly one thing to parse and one place to look for a failure message.
 type envelope struct {
 	Success bool        `json:"success"`
 	Message string      `json:"message,omitempty"`

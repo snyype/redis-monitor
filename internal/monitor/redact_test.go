@@ -44,7 +44,7 @@ func TestIsSensitiveKey(t *testing.T) {
 	}
 
 	harmless := []string{
-		"laravel_cache:branches",
+		"app_cache:branches",
 		"queue|default",
 		// "tokens" is not "token": the pattern anchors on separators so an ordinary
 		// word containing the fragment is not swept up.

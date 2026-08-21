@@ -204,8 +204,8 @@ func TestHistorySurvivesARestart(t *testing.T) {
 
 	first.record(0, point(35, now))
 
-	// A second store over the same directory is what a restart looks like. The PHP
-	// original kept this in the application cache, where cache:clear discarded it.
+	// A second store over the same directory is what a restart looks like. Keeping
+	// the series in memory instead would silently lose it on every deploy.
 	second, err := newHistoryStore(cfg, log)
 	if err != nil {
 		t.Fatalf("newHistoryStore: %v", err)

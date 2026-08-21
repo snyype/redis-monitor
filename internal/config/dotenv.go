@@ -8,7 +8,8 @@ import (
 
 // LoadDotEnv reads a .env style file and puts every pair into the process
 // environment. Values already present in the environment win, so a real env var
-// always beats the file — the same precedence Laravel's dotenv uses.
+// always beats the file — the usual precedence, and the one that lets a container
+// override a baked-in default.
 //
 // A missing file is not an error: the binary is expected to run from plain
 // environment variables in a container.

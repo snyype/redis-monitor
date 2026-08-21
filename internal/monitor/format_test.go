@@ -130,7 +130,7 @@ func TestNamespaceOf(t *testing.T) {
 		want      string
 		namespace bool
 	}{
-		{"laravel_cache:config", "laravel_cache:", true},
+		{"app_cache:config", "app_cache:", true},
 		{"queue|default", "queue|", true},
 		{"path/to/thing", "path/", true},
 		// Separators are tried in priority order — ':' then '|' then '/' — not by

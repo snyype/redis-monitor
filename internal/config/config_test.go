@@ -95,8 +95,9 @@ func TestRefusesToBootWithoutAToken(t *testing.T) {
 }
 
 func TestNullPasswordMeansNoPassword(t *testing.T) {
-	// Laravel writes REDIS_PASSWORD=null for "no password"; taken literally the
-	// monitor would try to authenticate with the word "null" and fail to connect.
+	// Plenty of tooling writes REDIS_PASSWORD=null to mean "no password"; taken
+	// literally the monitor would try to authenticate with the word "null" and fail
+	// to connect at all.
 	path := writeEnv(t, "REDIS_MONITOR_TOKEN=t\nREDIS_PASSWORD=null\n")
 
 	cfg, err := Load(path)
@@ -109,7 +110,7 @@ func TestNullPasswordMeansNoPassword(t *testing.T) {
 	}
 }
 
-func TestDefaultsMatchThePHPConfiguration(t *testing.T) {
+func TestShippedDefaults(t *testing.T) {
 	t.Setenv("REDIS_MONITOR_TOKEN", "t")
 
 	cfg, err := Load(filepath.Join(t.TempDir(), "absent.env"))
