@@ -142,6 +142,13 @@ input, select { font: inherit; }
   background: linear-gradient(180deg, var(--accent), var(--accent-2));
 }
 .col.void > i { background: var(--line); min-height: 2px; }
+
+/* ── charts: recorded trend (line) ───────────────────────────────────── */
+.trend-svg { display: block; width: 100%; height: 128px; padding-top: 6px; overflow: visible; }
+.trend-line { fill: none; stroke: var(--accent); stroke-width: 2; vector-effect: non-scaling-stroke; }
+.trend-dot { fill: var(--accent); }
+.trend-missing { fill: var(--line); }
+
 .col-axis { display: flex; gap: 3px; margin-top: 6px; }
 .col-axis span {
   flex: 1; min-width: 4px; font-size: 9px; color: var(--ink-faint);
@@ -348,19 +355,19 @@ pre.value {
           <div>
             <div class="chart-title" id="trend-day-title">Keys per day</div>
             <div class="chart-sub" id="trend-day-sub">—</div>
-            <div class="cols" id="trend-day"></div>
+            <svg class="trend-svg" id="trend-day" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
             <div class="col-axis" id="trend-day-axis"></div>
           </div>
           <div>
             <div class="chart-title" id="trend-hour-title">Keys per hour</div>
             <div class="chart-sub" id="trend-hour-sub">—</div>
-            <div class="cols" id="trend-hour"></div>
+            <svg class="trend-svg" id="trend-hour" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
             <div class="col-axis" id="trend-hour-axis"></div>
           </div>
           <div>
             <div class="chart-title">Keys expired per day</div>
             <div class="chart-sub" id="trend-expired-sub">—</div>
-            <div class="cols" id="trend-expired"></div>
+            <svg class="trend-svg" id="trend-expired" viewBox="0 0 300 100" preserveAspectRatio="none"></svg>
             <div class="col-axis" id="trend-expired-axis"></div>
           </div>
         </div>
@@ -631,6 +638,16 @@ function el(tag, className, text) {
   const node = document.createElement(tag);
   if (className) node.className = className;
   if (text !== undefined && text !== null) node.textContent = String(text);
+  return node;
+}
+
+// document.createElement silently produces a dead node for SVG children (<path>,
+// <circle>, ...) — they need the SVG namespace to render at all.
+const SVG_NS = "http://www.w3.org/2000/svg";
+
+function svgEl(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const key in attrs) node.setAttribute(key, attrs[key]);
   return node;
 }
 
@@ -1187,6 +1204,66 @@ function renderCols(host, axis, rows, options) {
   });
 }
 
+// renderLine draws a connected time-series line for a recorded series — same call
+// signature as renderCols (host, axis, rows, options), so a caller can swap
+// between them without touching anything else. A gap in the record breaks the
+// line rather than drawing through it, for the same reason renderCols draws a
+// flat "void" column instead of a zero: a slot nobody looked at is not a zero.
+function renderLine(host, axis, rows, options) {
+  const settings = options || {};
+  clear(host);
+  clear(axis);
+
+  // by_day/by_hour always carry one row per slot in the window, recorded or not,
+  // so an empty rows array here would mean the trend card itself should be
+  // hidden — which renderTrend already handles before calling in. Nothing to
+  // draw is a defensive no-op, not a state worth a message.
+  if (!rows || rows.length === 0) return;
+
+  const values = rows.map((row) => Number(settings.value ? settings.value(row) : row.count) || 0);
+  const largest = Math.max(1, ...values);
+
+  const W = 300, H = 100;
+  const x = (index) => (rows.length === 1 ? W / 2 : (index / (rows.length - 1)) * W);
+  const y = (value) => H - (value / largest) * H;
+
+  let d = "";
+  let drawing = false;
+
+  rows.forEach((row, index) => {
+    if (settings.missing && settings.missing(row)) {
+      drawing = false;
+
+      return;
+    }
+
+    d += (drawing ? "L" : "M") + x(index).toFixed(2) + " " + y(values[index]).toFixed(2) + " ";
+    drawing = true;
+  });
+
+  if (d) host.appendChild(svgEl("path", { class: "trend-line", d: d.trim() }));
+
+  rows.forEach((row, index) => {
+    const missing = settings.missing ? settings.missing(row) : false;
+    const value = values[index];
+
+    const dot = svgEl("circle", {
+      cx: x(index).toFixed(2),
+      cy: (missing ? H - 1 : y(value)).toFixed(2),
+      r: missing ? 1.5 : 2.2,
+      class: missing ? "trend-missing" : "trend-dot",
+    });
+
+    const title = document.createElementNS(SVG_NS, "title");
+    title.textContent = (row.label || row.slot) + ": "
+      + (missing ? "not recorded" : (settings.tip ? settings.tip(row, value) : num(value)));
+    dot.appendChild(title);
+    host.appendChild(dot);
+
+    axis.appendChild(el("span", null, index % settings.every === 0 ? row.short : ""));
+  });
+}
+
 function renderStats(data) {
   const sample = data.sample;
 
@@ -1329,12 +1406,12 @@ function renderTrend(history) {
   $("trend-day-sub").textContent = recordedDays + " of " + history.by_day.length + " days recorded";
   $("trend-hour-sub").textContent = recordedHours + " of " + history.by_hour.length + " hours recorded";
 
-  renderCols($("trend-day"), $("trend-day-axis"), history.by_day, { value, missing, tip, every: 3 });
-  renderCols($("trend-hour"), $("trend-hour-axis"), history.by_hour, { value, missing, tip, every: 6 });
+  renderLine($("trend-day"), $("trend-day-axis"), history.by_day, { value, missing, tip, every: 3 });
+  renderLine($("trend-hour"), $("trend-hour-axis"), history.by_hour, { value, missing, tip, every: 6 });
 
   const expiredRows = history.by_day.filter((row) => row.expired !== null);
   $("trend-expired-sub").textContent = expiredRows.length + " days with a comparable reading";
-  renderCols($("trend-expired"), $("trend-expired-axis"), history.by_day, {
+  renderLine($("trend-expired"), $("trend-expired-axis"), history.by_day, {
     value: (row) => row.expired || 0,
     missing: (row) => row.expired === null,
     every: 3,
