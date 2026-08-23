@@ -79,6 +79,12 @@ Linux capabilities dropped. Liveness and readiness probes hit `/healthz` and
 `HEALTHCHECK`, a Kubernetes probe needs no shell or `wget` inside the
 container at all.
 
+One consequence worth knowing: **`kubectl exec` and `kubectl cp` don't work**
+against this image — `exec` because there's no shell to run, and `cp` because
+it shells out to `tar` inside the container, which also isn't there. Reach
+`/data` through the PVC itself (mount it into another pod) if you need to
+inspect the recorded trend directly, rather than through the running pod.
+
 ## Multiple Redis servers
 
 Out of scope today — this chart, like the binary itself, points at exactly
