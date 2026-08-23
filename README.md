@@ -175,6 +175,39 @@ command would prefix those names a second time on the way back — the browser w
 then show, and fail to read, keys that do not exist. This monitor shows precisely
 what is on the server.
 
+### Monitoring more than one Redis server
+
+Not supported today, and deliberately not a small add. `config.Config` holds
+exactly one `Redis` struct, `redisx.Pool` hands out one client per **database
+index** on that one server, and every `monitor.Service` method — overview, stats,
+namespaces, keys, clients, history — takes a `db int` and nothing that names a
+server. The recorded trend is one file per database (`history-db{N}.json`), not
+per server, and the page draws a single connection badge from `/config`.
+
+Making that a real "switch between servers" feature, rather than a config typo away
+from monitoring the wrong one, touches every layer at once:
+
+- **Config** — a list of named connections instead of one `Redis` struct, and a
+  decision about env-var shape: a JSON array in one var breaks the project's flat,
+  no-config-file philosophy; indexed vars (`REDIS_HOST_1`, `REDIS_HOST_2`, ...) stay
+  flat but are uglier and harder to validate.
+- **`redisx.Pool`** — a pool of pools, keyed by connection name and then database.
+- **Every `monitor.Service` method and HTTP handler** — an added connection
+  selector, validated the same way `db` is today.
+- **History storage** — filenames (and cache keys) need the connection name added
+  alongside the database index.
+- **The UI** — a connection dropdown next to the database one, `/config` extended
+  to list connections, and `online()`'s single badge reworked.
+
+All of that is buildable, but it is a cross-cutting change to `config`, `redisx`,
+`monitor`, `httpapi` and the frontend simultaneously — not a flag. The workaround
+that costs nothing today: run one instance per Redis server (a second
+`docker run`/`docker-compose` service, or a second `helm install` release — see
+[`k8s/README.md`](k8s/README.md#multiple-redis-servers)), each pointed at a
+different `REDIS_HOST`. That is likely the better long-term shape too: it keeps
+the single-binary, single-responsibility design intact, and a crashed or
+misbehaving monitor for one server never affects the page for another.
+
 ---
 
 ## API
@@ -396,6 +429,36 @@ The builder stage is pinned to `$BUILDPLATFORM` and Go cross-compiles to
 `$TARGETARCH` itself. Building it the obvious way instead — letting the builder run
 under QEMU — emulates the whole Go toolchain and turns a two-platform build from
 seconds into many minutes, for byte-identical output.
+
+**The run stage is `FROM scratch`** (~8.6MB image): the binary is CGO-free, talks
+to Redis over plain TCP, and reads no CA bundle, no timezone data and no
+`/etc/passwd`, so nothing from a distro base is actually needed at runtime. Two
+consequences worth knowing:
+
+- **There is no shell in the image** — no `docker exec ... sh`, no `wget`/`curl`.
+  The container's `HEALTHCHECK` calls the binary's own `-healthcheck` flag instead,
+  which just GETs its local `/healthz` and exits `0`/`1`.
+- The container runs as a **numeric non-root UID (`10001`)** with no matching
+  `/etc/passwd` entry — Kubernetes and Docker both accept that; `id`/`whoami`
+  inside the container would not.
+
+### Compose files
+
+- [`docker-compose-example.yml`](docker-compose-example.yml) — committed, documents
+  every env var the binary reads with a one-liner each (the compose equivalent of
+  [`.env.example`](.env.example)).
+- `docker-compose.yml` — your own local test file, git-ignored (see
+  [`.gitignore`](.gitignore)) so real hostnames and credentials never get committed
+  by accident.
+
+---
+
+## Kubernetes
+
+A Helm chart under [`k8s/`](k8s) — see [`k8s/README.md`](k8s/README.md) for
+installing it, the `values.yaml` (minimal) vs. `values-all.yaml` (every option)
+split, running behind your own reverse proxy without an Ingress controller, and
+why the chart deploys exactly one replica.
 
 ---
 

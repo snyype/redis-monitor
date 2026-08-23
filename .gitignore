@@ -1,6 +1,9 @@
 # Local configuration — .env.example is the template that is committed.
 .env
 
+# Personal test compose file — docker-compose-example.yml is the template that is committed.
+docker-compose.yml
+
 # The recorded trend series.
 data/
 

@@ -1,0 +1,94 @@
+services:
+  redis-monitor:
+    image: ghcr.io/snyype/redis-monitor:latest
+    ports:
+      - "7088:8088" # host:container — container always listens on HTTP_ADDR below
+    environment:
+      # ─────────────────────────── Transport ───────────────────────────
+      HTTP_ADDR: ":8088"                            # address the server binds inside the container
+      REDIS_MONITOR_DATA_DIR: "/data"                # where the trend history file is written; mount a volume to persist it
+      REDIS_MONITOR_TRUST_PROXY: "false"             # true only behind a proxy that itself sets X-Forwarded-For
+
+      # ──────────────────────────── Access ─────────────────────────────
+      REDIS_MONITOR_USERNAME: ""                     # login username; must be set together with the password below, or neither
+      REDIS_MONITOR_PASSWORD: ""                     # login password for REDIS_MONITOR_USERNAME
+      REDIS_MONITOR_SESSION_TTL: "28800"             # idle session timeout in seconds (slides on use)
+      REDIS_MONITOR_TOKEN: "change-me"               # static bearer token for scripts/curl: Authorization: Bearer <token>
+      REDIS_MONITOR_DEV: "false"                     # true allows boot with no credential at all; local use only
+      REDIS_MONITOR_TOTP_SECRET: ""                  # generate with: docker run --rm ghcr.io/snyype/redis-monitor:latest -totp-secret
+      REDIS_MONITOR_REQUIRE_AUTHENTICATOR: "true"    # require a 6-digit code on delete; refuses deletes if true with no secret set
+      REDIS_MONITOR_REQUIRE_AUTHENTICATOR_ON_LOGIN: "false" # also require a code at login; needs REDIS_MONITOR_TOTP_SECRET set
+
+      # ──────────────────────────── Redis ───────────────────────────────
+      REDIS_SCHEME: "tcp"                            # connection scheme go-redis dials with
+      REDIS_HOST: "127.0.0.1"                        # hostname/IP of the Redis server to monitor
+      REDIS_PORT: "6379"                             # port of the Redis server to monitor
+      REDIS_USERNAME: ""                             # Redis ACL username, if the server requires one
+      REDIS_PASSWORD: "null"                         # Redis auth password; the literal "null" means no password
+      REDIS_TIMEOUT: "3"                              # dial timeout in seconds
+      REDIS_READ_TIMEOUT: "10"                       # read timeout in seconds
+      REDIS_WRITE_TIMEOUT: "10"                      # write timeout in seconds
+      REDIS_POOL_SIZE: "10"                          # max connections in the Redis client pool
+
+      # ─────────────────────────── Feature ──────────────────────────────
+      REDIS_MONITOR_ENABLED: "true"                  # false makes every /api/redis-monitor/* endpoint 404
+      REDIS_MONITOR_CONNECTION: "default"            # label shown on the connection badge in the UI
+      REDIS_MONITOR_MAX_DB: "15"                     # highest selectable database index; the UI offers 0..N
+
+      # ────────────────────────  Browsing limits  ───────────────────────
+      REDIS_MONITOR_PAGE_SIZE: "50"                  # keys returned per SCAN page
+      REDIS_MONITOR_MAX_PAGE_SIZE: "200"             # hard cap on the per_page request parameter
+      REDIS_MONITOR_SCAN_COUNT: "500"                # COUNT hint passed to each SCAN call
+      REDIS_MONITOR_MAX_SCAN_ITERATIONS: "200"       # give up scanning after this many SCAN round trips
+
+      # ─────────────────────  Overview sampling (charts)  ───────────────
+      REDIS_MONITOR_SAMPLE_SIZE: "2000"              # keys sampled per overview refresh
+      REDIS_MONITOR_METRICS_CACHE: "15"              # seconds the overview response is cached
+      REDIS_MONITOR_TOP_PREFIXES: "10"               # number of top key-prefixes shown
+
+      # ──────────────────  Namespace dropdown discovery  ─────────────────
+      REDIS_MONITOR_NAMESPACE_SAMPLE_SIZE: "20000"   # keys sampled to discover namespaces (key names only, cheap)
+      REDIS_MONITOR_NAMESPACE_CACHE: "60"            # seconds the namespace list is cached
+      REDIS_MONITOR_MAX_NAMESPACES: "200"            # max namespaces listed in the dropdown
+
+      # ───────────────────  Key analytics deep sample  ──────────────────
+      REDIS_MONITOR_STATS_SAMPLE_SIZE: "3000"        # keys sampled for the stats page (4 commands per key, pipelined)
+      REDIS_MONITOR_STATS_CACHE: "60"                # seconds the stats sample is cached
+      REDIS_MONITOR_STATS_EXPIRY_DAYS: "14"          # TTL bucket horizon shown in the expiry chart
+      REDIS_MONITOR_STATS_TOP_NAMESPACES: "12"       # number of namespaces shown in the stats breakdown
+      REDIS_MONITOR_STATS_LARGEST_KEYS: "10"         # number of largest keys listed
+      REDIS_MONITOR_STATS_MEMORY: "true"             # false skips MEMORY USAGE, dropping the memory charts
+      REDIS_MONITOR_STATS_IDLE: "true"               # false skips OBJECT IDLETIME, dropping the idle chart
+
+      # ───────────────────────  Trend history  ──────────────────────────
+      REDIS_MONITOR_HISTORY_ENABLED: "true"          # record and serve the trend series
+      REDIS_MONITOR_HISTORY_DAYS: "30"               # day buckets kept, and the widest selectable UI range
+      REDIS_MONITOR_HISTORY_HOURS: "48"              # hour buckets kept
+      REDIS_MONITOR_HISTORY_MIN_INTERVAL: "120"      # minimum seconds between two recorded points
+
+      # ──────────────────────────  Value previews  ───────────────────────
+      REDIS_MONITOR_PREVIEW_BYTES: "8192"            # max bytes of a value shown in the preview
+      REDIS_MONITOR_PREVIEW_ELEMENTS: "100"          # max collection elements shown in the preview
+
+      # ───────────────────────────── Delete ──────────────────────────────
+      REDIS_MONITOR_ALLOW_DELETE: "true"             # false makes this a strictly read-only screen
+      REDIS_MONITOR_MAX_DELETE: "200"                # max keys accepted per delete request
+      REDIS_MONITOR_CODE_REUSE_WINDOW: "120"         # seconds a spent authenticator code stays blacklisted
+
+      # ─────────────────────────  Connected clients  ──────────────────────
+      REDIS_MONITOR_MAX_CLIENTS: "500"               # rows returned by CLIENT LIST; a busier server is truncated
+      REDIS_MONITOR_CLIENTS_CACHE: "5"               # seconds a CLIENT LIST snapshot is reused
+
+      # ───────────────────────────  Rate limits  ───────────────────────────
+      REDIS_MONITOR_READ_RATE_LIMIT: "120"           # read requests per minute per IP
+      REDIS_MONITOR_DELETE_RATE_LIMIT: "20"          # delete requests per minute per IP
+      REDIS_MONITOR_LOGIN_RATE_LIMIT: "10"           # login attempts per minute per IP; deliberately tighter
+
+      # ───────────────────────────  Redaction  ────────────────────────────
+      REDIS_MONITOR_REDACT_KEY_PATTERNS: ""          # newline-separated RE2 patterns; REPLACES defaults, empty = redact no key names
+      REDIS_MONITOR_REDACT_VALUE_PATTERNS: ""        # newline-separated RE2 patterns; REPLACES defaults, empty = redact nothing in values
+    volumes:
+      - redis-monitor-data:/data
+
+volumes:
+  redis-monitor-data:
