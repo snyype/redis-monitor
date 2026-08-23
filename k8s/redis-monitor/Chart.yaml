@@ -4,6 +4,9 @@ description: Standalone Redis key browser, metrics dashboard and connected-clien
 type: application
 version: 0.1.0
 appVersion: "latest"
+maintainers:
+  - name: Lokendra Bhat
+    url: https://github.com/LokendraBhat
 home: https://github.com/snyype/redis-monitor
 sources:
   - https://github.com/snyype/redis-monitor
