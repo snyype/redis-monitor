@@ -1,0 +1,9 @@
+apiVersion: v2
+name: redis-monitor
+description: Standalone Redis key browser, metrics dashboard and connected-clients view
+type: application
+version: 0.1.0
+appVersion: "latest"
+home: https://github.com/snyype/redis-monitor
+sources:
+  - https://github.com/snyype/redis-monitor
