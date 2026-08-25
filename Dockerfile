@@ -28,17 +28,20 @@ RUN CGO_ENABLED=0 GOOS=$TARGETOS GOARCH=$TARGETARCH \
       -ldflags="-s -w -X main.version=${VERSION} -X main.commit=${COMMIT} -X main.builtAt=${BUILT_AT}" \
       -o /out/redis-monitor ./cmd/redis-monitor
 
-# Run stage. The UI is embedded in the binary, so there is nothing else to copy.
-FROM alpine:3.20
+# scratch has no shell and no adduser, so the non-root ownership is set up here,
+# in the builder, and copied over verbatim.
+RUN mkdir -p /out/data && chown -R 10001:10001 /out/data
 
-# wget is what the healthcheck below uses; busybox already provides it.
-RUN adduser -D -u 10001 monitor \
- && mkdir -p /data \
- && chown monitor:monitor /data
+# Run stage. The UI is embedded in the binary, the binary is CGO-free and talks to
+# Redis over plain TCP (no TLS, no timezone lookups), so nothing from a distro
+# base — libc, CA bundle, tzdata, a shell — is actually needed at runtime.
+FROM scratch
 
+COPY --from=build --chown=10001:10001 /out/data /data
 COPY --from=build /out/redis-monitor /usr/local/bin/redis-monitor
 
-USER monitor
+# Numeric UID: no /etc/passwd entry is required for USER to work.
+USER 10001
 WORKDIR /data
 
 # The recorded trend lives here. Mount a volume if the series should outlive the
@@ -49,11 +52,12 @@ ENV HTTP_ADDR=:8088
 EXPOSE 8088
 
 # Liveness only: readiness (/readyz) reports on Redis, and a monitor must not be
-# restarted merely because the server it watches is down.
+# restarted merely because the server it watches is down. There is no wget in
+# this image, so the binary checks itself instead of shelling out to one.
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s \
-  CMD wget -qO- http://127.0.0.1:8088/healthz >/dev/null || exit 1
+  CMD ["/usr/local/bin/redis-monitor", "-healthcheck"]
 
-ENTRYPOINT ["redis-monitor"]
+ENTRYPOINT ["/usr/local/bin/redis-monitor"]
 
 # Labels last, so changing them cannot invalidate any build cache above.
 ARG VERSION

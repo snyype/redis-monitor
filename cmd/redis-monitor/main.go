@@ -13,10 +13,12 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -46,6 +48,7 @@ func main() {
 	account := flag.String("totp-account", "redis-monitor", "account label for the generated otpauth:// URI")
 	issuer := flag.String("totp-issuer", "Redis Monitor", "issuer label for the generated otpauth:// URI")
 	showVersion := flag.Bool("version", false, "print the build version, then exit")
+	healthcheck := flag.Bool("healthcheck", false, "GET the local /healthz endpoint, exit 0/1; there is no shell to run wget/curl in the scratch image")
 	flag.Parse()
 
 	log := slog.New(slog.NewTextHandler(os.Stderr, &slog.HandlerOptions{Level: slog.LevelInfo}))
@@ -60,6 +63,15 @@ func main() {
 	if *newSecret {
 		if err := printSecret(*account, *issuer); err != nil {
 			log.Error("cannot generate a secret", "error", err)
+			os.Exit(1)
+		}
+
+		return
+	}
+
+	if *healthcheck {
+		if err := checkLive(); err != nil {
+			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
 
@@ -82,6 +94,34 @@ func printSecret(account, issuer string) error {
 
 	fmt.Println("REDIS_MONITOR_TOTP_SECRET=" + secret)
 	fmt.Println(totp.ProvisioningURI(secret, account, issuer))
+
+	return nil
+}
+
+// checkLive backs the container HEALTHCHECK. The scratch image has no shell and
+// no wget, so the binary probes itself instead of shelling out to one.
+func checkLive() error {
+	addr := strings.TrimSpace(os.Getenv("HTTP_ADDR"))
+	if addr == "" {
+		addr = ":8088"
+	}
+
+	_, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		return fmt.Errorf("HTTP_ADDR %q: %w", addr, err)
+	}
+
+	client := &http.Client{Timeout: 2 * time.Second}
+
+	resp, err := client.Get("http://127.0.0.1:" + port + "/healthz")
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return fmt.Errorf("/healthz returned %s", resp.Status)
+	}
 
 	return nil
 }

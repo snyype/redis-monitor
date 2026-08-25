@@ -1,0 +1,89 @@
+# Minimal values: everything the chart needs to render, with only the handful of
+# env vars actually required to boot (see values-all.yaml for the full,
+# documented list of every option the app reads).
+replicaCount: 1 # sessions live in memory, history is a local file — do not scale up
+
+image:
+  repository: ghcr.io/snyype/redis-monitor
+  tag: latest
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+nameOverride: ""
+fullnameOverride: ""
+
+# No Ingress controller in your cluster? Leave ingress.enabled false below and
+# point your own reverse proxy (nginx, HAProxy, Traefik, ...) at this Service —
+# ClusterIP if the proxy runs in-cluster, or NodePort/LoadBalancer if it runs
+# outside. nodePort lets you pin a stable port for that proxy to target instead
+# of a random one.
+service:
+  type: ClusterIP
+  port: 8088
+  targetPort: 8088
+  nodePort: "" # only used when type: NodePort; empty = cluster picks a random port
+
+persistence:
+  enabled: false # false = emptyDir, history is lost on pod restart; true = PVC below
+  existingClaim: ""
+  accessMode: ReadWriteOnce
+  size: 1Gi
+  storageClass: ""
+
+probes:
+  enabled: true
+  liveness:
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+  readiness:
+    initialDelaySeconds: 5
+    periodSeconds: 15
+    timeoutSeconds: 3
+    failureThreshold: 3
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  fsGroup: 10001
+
+securityContext:
+  runAsNonRoot: true
+  runAsUser: 10001
+  allowPrivilegeEscalation: false
+  readOnlyRootFilesystem: true
+  capabilities:
+    drop: ["ALL"]
+
+resources: {}
+
+nodeSelector: {}
+tolerations: []
+affinity: {}
+podAnnotations: {}
+
+ingress:
+  enabled: false # true only if you actually run an Ingress controller; see the service: note above otherwise
+  className: ""
+  annotations: {}
+  hosts:
+    - host: redis-monitor.local
+      paths:
+        - path: /
+          pathType: Prefix
+  tls: []
+
+# Escape hatches for values not covered by env: below — e.g. valueFrom a Secret,
+# or an existing ConfigMap/Secret pulled in wholesale.
+extraEnv: []
+envFrom: []
+
+env:
+  # ──────────────────────────── Redis ───────────────────────────────
+  REDIS_HOST: "127.0.0.1" # required: the Redis server to monitor
+  REDIS_PORT: "6379" # required: its port
+
+  # ──────────────────────────── Access ─────────────────────────────
+  # One of these is required — a static token, or a username+password pair below.
+  REDIS_MONITOR_TOKEN: "change-me" # static bearer token: Authorization: Bearer <token>

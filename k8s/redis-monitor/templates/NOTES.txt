@@ -1,0 +1,29 @@
+redis-monitor has been deployed as {{ include "redis-monitor.fullname" . }}.
+
+Only one replica is meaningful with the defaults: sessions live in memory and the
+trend history is a local file under /data, neither shared across pods. Scaling
+replicaCount above 1 splits logins and history across replicas rather than adding
+capacity.
+
+Generate a TOTP secret using the image itself, no local Go toolchain needed:
+
+  kubectl run redis-monitor-totp --rm -it --restart=Never \
+    --image={{ .Values.image.repository }}:{{ .Values.image.tag | default .Chart.AppVersion }} \
+    -- -totp-secret
+
+Reach the dashboard:
+
+{{- if .Values.ingress.enabled }}
+{{- range .Values.ingress.hosts }}
+  http://{{ .host }}{{ (index .paths 0).path }}
+{{- end }}
+{{- else if eq .Values.service.type "LoadBalancer" }}
+  kubectl get svc -w {{ include "redis-monitor.fullname" . }} --namespace {{ .Release.Namespace }}
+{{- else if eq .Values.service.type "NodePort" }}
+  export NODE_PORT=$(kubectl get svc {{ include "redis-monitor.fullname" . }} --namespace {{ .Release.Namespace }} -o jsonpath="{.spec.ports[0].nodePort}")
+  export NODE_IP=$(kubectl get nodes --namespace {{ .Release.Namespace }} -o jsonpath="{.items[0].status.addresses[0].address}")
+  echo http://$NODE_IP:$NODE_PORT
+{{- else }}
+  kubectl port-forward --namespace {{ .Release.Namespace }} svc/{{ include "redis-monitor.fullname" . }} 8088:{{ .Values.service.port }}
+  echo http://127.0.0.1:8088
+{{- end }}

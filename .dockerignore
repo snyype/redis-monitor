@@ -3,6 +3,8 @@
 .github
 scripts
 .env
+docker-compose.yml
+docker-compose-example.yml
 data/
 ci-data/
 dist/
